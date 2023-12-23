@@ -2,4 +2,4 @@
 
 # CowsDB
 
-> Moo your data with a herd of cattle
+> Milk and Moo data with your herd of OLAP cattle
