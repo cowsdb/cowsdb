@@ -20,6 +20,7 @@
 ## Usage
 
 ```
+COMING SOON 🏁
 ```
 
 ### License
