@@ -5,41 +5,32 @@ on:
 
 permissions:
    contents: write
-   actions: write
    pull-requests: write
 
 jobs:
   sync_latest_from_upstream:
     runs-on: ubuntu-latest
-    name: Sync latest commits from upstream
+    name: Sync with upstream
     steps:
     - name: Checkout target repo
       uses: actions/checkout@v3
       with:
         ref:  chdb
 
-    - name: Sync upstream changes
+    - name: Force resync with upstream
       id: sync
-      uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+      run: |
+        git clone https://github.com/chdb-io/chdb tmp_chdb
+        cp -r tmp_chdb/* .
+        rm -rf tmp_chdb
+        
+    - name: Sync to local branch
+      uses: devops-infra/action-commit-push@master
       with:
-        target_sync_branch: chdb
-        target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-        target_branch_push_args: "--force"
-        upstream_sync_branch: main
-        upstream_sync_repo: chdb-io/chdb
-        upstream_pull_args: "--allow-unrelated-histories"
-        git_config_pull_rebase: false
-        # Set test_mode true to run tests instead of the true action!!
-        test_mode: false
-      
-    # Step 3: Display a sample message based on the sync output var 'has_new_commits'
-    - name: New commits found
-      if: steps.sync.outputs.has_new_commits == 'true'
-      run: echo "New commits were found to sync."
-    
-    - name: No new commits
-      if: steps.sync.outputs.has_new_commits == 'false'
-      run: echo "There were no new commits."
-      
-    - name: Show value of 'has_new_commits'
-      run: echo ${{ steps.sync.outputs.has_new_commits }}
+        github_token: "${{ secrets.GITHUB_TOKEN }}"
+        add_timestamp: true
+        commit_prefix: "[ACTION]"
+        commit_message: Resync with upstream
+        force: true
+        target_branch: chdb
+        
