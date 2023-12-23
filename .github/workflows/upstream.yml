@@ -19,7 +19,7 @@ jobs:
       with:
         target_sync_branch: chdb
         target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-        target_branch_push_args: "--force"
+        target_branch_push_args: "--force-with-lease"
         upstream_sync_branch: main
         upstream_sync_repo: chdb-io/chdb
         upstream_pull_args: "--allow-unrelated-histories"
