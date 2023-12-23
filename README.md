@@ -8,9 +8,12 @@
 
 
 ### Why not chdb?
-> chdb has been _"sold"_ by its main author to ClickHouse Inc. and is now controlled by a corporation.<br>
+> chdb was a great promise and we contributed to its inception and its bindings from the very beginning.<br>
+> sadly it has been _"sold"_ by its main author to ClickHouse Inc. and is now controlled by a corporation.<br>
 > This fork builds on the same technology stack without politics, redtape or hidden comemrcial interests.<br>
-> Cows don't bite you with poison. Snakes do.
+
+_Cows are peaceful and produce milk. Snakes bite with poison._
+
 > 
 ## Features
 - In-process SQL OLAP Engine, powered by chdb/ClickHouse
