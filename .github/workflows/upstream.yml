@@ -20,7 +20,7 @@ jobs:
     - name: Force resync with upstream
       id: sync
       run: |
-        git clone https://github.com/chdb-io/chdb tmp_chdb
+        git clone https://github.com/chdb-io/chdb -b main --single-branch tmp_chdb
         cp -r tmp_chdb/* .
         rm -rf tmp_chdb
         
