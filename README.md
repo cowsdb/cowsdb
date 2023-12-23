@@ -18,7 +18,7 @@ _Cows are peaceful and produce milk. Snakes bite with poison._
 ## Features
 - In-process SQL OLAP Engine, powered by chdb/ClickHouse
 - Designed for native bindings and library integrations
-- No python obsession.
+- No python obsession. Every binding matters.
 
 ## Usage
 
