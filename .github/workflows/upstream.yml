@@ -23,6 +23,7 @@ jobs:
         upstream_sync_branch: main
         upstream_sync_repo: chdb-io/chdb
         upstream_pull_args: "--allow-unrelated-histories"
+        git_config_pull_rebase: true
         # Set test_mode true to run tests instead of the true action!!
         test_mode: false
       
