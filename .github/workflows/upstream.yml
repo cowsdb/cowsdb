@@ -20,6 +20,8 @@ jobs:
         git clone https://github.com/chdb-io/chdb -b main --single-branch tmp_chdb
         cp -r tmp_chdb/* .
         rm -rf tmp_chdb
+        git add .
+        git commit -am resync
         
     - name: Sync to local branch
       uses: devops-infra/action-commit-push@master
@@ -28,4 +30,5 @@ jobs:
         add_timestamp: false
         target_branch: chdb
         force: true
+        commit_message: "resync"
         
