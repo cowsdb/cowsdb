@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     name: Sync with upstream
     steps:
+    - name: Checkout
+      uses: actions/checkout@v3
     - name: Force resync with upstream
       id: sync
       run: |
