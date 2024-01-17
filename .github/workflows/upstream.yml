@@ -12,11 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     name: Sync with upstream
     steps:
-    - name: Checkout target repo
-      uses: actions/checkout@v3
-      with:
-        ref:  chdb
-
     - name: Force resync with upstream
       id: sync
       run: |
