@@ -22,7 +22,7 @@ jobs:
       with:
         upstream_sync_branch: main
         upstream_sync_repo: chdb-io/chdb
-        upstream_pull_args: "--allow-unrelated-histories"
+        upstream_pull_args: "--ff-only"
         target_sync_branch: chdb
         target_repo_token: ${{ secrets.GITHUB_TOKEN }}
         
