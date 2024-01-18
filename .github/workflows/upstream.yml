@@ -18,11 +18,11 @@ jobs:
       id: sync
       uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
       with:
-        upstream_repository: chdb-io/chdb
-        upstream_branch: main
-        target_branch: chdb
-        #git_pull_args: --ff-only                    # optional arg use, defaults to simple 'pull'
-        github_token: ${{ secrets.GITHUB_TOKEN }}
+        upstream_sync_branch: main
+        upstream_sync_repo: chdb-io/chdb
+        target_sync_branch: chdb
+        target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+        
     - name: Check for new commits
       if: steps.sync.outputs.has_new_commits
       run: echo "New Commits pulled."
