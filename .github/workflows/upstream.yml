@@ -14,6 +14,8 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v3
+      with:
+        ref:  chdb
     - name: Pull (Fast-Forward) upstream changes
       id: sync
       uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
@@ -26,6 +28,7 @@ jobs:
     - name: Check for new commits
       if: steps.sync.outputs.has_new_commits
       run: echo "New Commits pulled."
+      
     - name: Timestamp
       run: date
         
