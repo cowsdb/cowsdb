@@ -8,7 +8,7 @@ env:
   
 jobs:
   releases-matrix:
-    name: Release Go Binary
+    name: Moo Builder
     runs-on: ubuntu-latest
     strategy:
       matrix:
