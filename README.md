@@ -18,11 +18,13 @@ _Cows are peaceful and produce milk. Snakes bite with poison._
 
 > 
 ## Features
-- In-process SQL OLAP Engine, powered by chdb/ClickHouse
-- Designed for native bindings and library integrations
-- No python obsession. Every binding matters.
+- In-process SQL OLAP Engine based on chdb/ClickHouse
+- Designed for cloud services and microservices
+- Not controlled by ClickHouse. Not for sale. 
 
 ## Usage
+
+CowsDB prentends to be ClickHouse and can be used with any HTTP/S client
 
 ```
 docker run --rm -p 8123:8123 ghcr.io/cowsdb/cowsdb:latest
