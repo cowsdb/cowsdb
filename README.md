@@ -2,7 +2,7 @@
 
 # 🐄 CowsDB 
 
-> CowsDB is a chdb/ClickHouse alternative free roaming opensource fields
+> CowsDB is a community maintained chdb/ClickHouse alternative build without owners
 
 <img src="https://github.com/cowsdb/cowsdb/assets/1423657/7d937499-9512-4a5f-b832-7a689112fc1e" width=600>
 
@@ -25,7 +25,7 @@ _Cows are peaceful and produce milk. Snakes bite with poison._
 ## Usage
 
 ```
-COMING SOON 🏁
+docker run --rm -p 8123:8123 ghcr.io/cowsdb/cowsdb:latest
 ```
 
 ### License
