@@ -2,7 +2,7 @@
 
 # 🐄 CowsDB 
 
-> CowsDB is a community maintained chdb/ClickHouse alternative without corporate owners
+> CowsDB is a community maintained chdb/ClickHouse alternative server without corporate owners
 
 <img src="https://github.com/cowsdb/cowsdb/assets/1423657/7d937499-9512-4a5f-b832-7a689112fc1e" width=600>
 
@@ -49,4 +49,4 @@ clickhouse+http://cowsdb-server:443/db?protocol=https
 
 
 ### License
-To avoid hostile corporate takeovers and history rewriting by evil hands, CowsDB is licensed under the AGPLv3 license.
+CowsDB is licensed under the AGPLv3 license and is not affiliated in any way with ClickHouse Inc. 
