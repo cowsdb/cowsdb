@@ -1,5 +1,4 @@
 FROM python:3.8.10-slim
-ENV VERSION 0.14.2
 WORKDIR /app
 ADD requirements.txt .
 RUN apt update && apt install -y binutils \
