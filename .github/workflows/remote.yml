@@ -30,14 +30,14 @@ jobs:
     - run:
         echo ${{ steps.local.outputs.release }}
     - name: Release
-      if: ${{ steps.remote.outputs.release !== steps.local.outputs.release }}
+      if: ${{ steps.remote.outputs.release != steps.local.outputs.release }}
       uses: softprops/action-gh-release@v2
       with:
        tag_name: ${{ steps.remote.outputs.release }}
        name: ${{ steps.remote.outputs.release }}
        make_latest: true
     - name: Log in to the Container registry
-      if: ${{ steps.remote.outputs.release !== steps.local.outputs.release }}
+      if: ${{ steps.remote.outputs.release != steps.local.outputs.release }}
       uses: docker/login-action@v2.1.0
       with:
         registry: ${{ env.REGISTRY }}
@@ -45,14 +45,14 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Extract metadata (tags, labels) for Docker
-      if: ${{ steps.remote.outputs.release !== steps.local.outputs.release }}
+      if: ${{ steps.remote.outputs.release != steps.local.outputs.release }}
       id: meta
       uses: docker/metadata-action@v4.3.0
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
     - name: Build and push Docker image
-      if: ${{ steps.remote.outputs.release !== steps.local.outputs.release }}
+      if: ${{ steps.remote.outputs.release != steps.local.outputs.release }}
       uses: docker/build-push-action@v4.0.0
       with:
         context: .
