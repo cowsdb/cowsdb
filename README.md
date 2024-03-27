@@ -2,7 +2,7 @@
 
 # 🐄 CowsDB 
 
-> CowsDB is a community maintained chdb/ClickHouse alternative without borders
+> CowsDB is a community maintained chdb/ClickHouse alternative without corporate owners
 
 <img src="https://github.com/cowsdb/cowsdb/assets/1423657/7d937499-9512-4a5f-b832-7a689112fc1e" width=600>
 
