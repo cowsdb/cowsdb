@@ -36,6 +36,7 @@ jobs:
        tag_name: ${{ steps.remote.outputs.release }}
        name: ${{ steps.remote.outputs.release }}
        make_latest: true
+       body: auto-update engine to ${{ steps.remote.outputs.release }}
     - name: Log in to the Container registry
       if: ${{ steps.remote.outputs.release != steps.local.outputs.release }}
       uses: docker/login-action@v2.1.0
