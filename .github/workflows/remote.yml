@@ -60,5 +60,5 @@ jobs:
       with:
         context: .
         push: true
-        tags: cghcr.io/cowsdb/cowsdb:latest,ghcr.io/cowsdb/cowsdb:${{ steps.remote.outputs.release }}
+        tags: ghcr.io/cowsdb/cowsdb:latest,ghcr.io/cowsdb/cowsdb:${{ steps.remote.outputs.release }}
         labels: ${{ steps.meta.outputs.labels }}
