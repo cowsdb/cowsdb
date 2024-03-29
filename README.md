@@ -7,15 +7,15 @@
 <img src="https://github.com/cowsdb/cowsdb/assets/1423657/7d937499-9512-4a5f-b832-7a689112fc1e" width=600>
 
 
-### Why not chdb?
-
 _Cows are peaceful and produce milk. Snakes bite and poison._
 
+<!--
+### Why not chdb?
 
 > chdb was a great promise and we contributed to its inception and its bindings from the very beginning.<br>
 > sadly it has been _"sold"_ by its main author to ClickHouse Inc. and is now controlled by a corporation.<br>
 > This fork builds on the same technology stack without politics, redtape or hidden comemrcial interests.<br>
-
+-->
 
 > 
 ## Features
