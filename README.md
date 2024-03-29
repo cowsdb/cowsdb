@@ -7,7 +7,7 @@
 <img src="https://github.com/cowsdb/cowsdb/assets/1423657/7d937499-9512-4a5f-b832-7a689112fc1e" width=600>
 
 
-_Cows are peaceful and produce milk. Snakes bite and poison._
+> _Cows are peaceful and produce milk. Snakes bite and poison._
 
 <!--
 ### Why not chdb?
