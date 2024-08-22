@@ -6,11 +6,27 @@ from chdb import session as chs
 from flask import Flask, request
 from flask_httpauth import HTTPBasicAuth
 
+import tempfile
+import re
+
 app = Flask(__name__, static_folder="public", static_url_path="")
 auth = HTTPBasicAuth()
 driver = chdb
 
+# Format extractor
+
+def extract_format(query: str) -> str:
+    match = re.search(r'FORMAT\s+(\S+)', query)
+    return match.group(1) if match else None
+
+
+def extract_table(query: str) -> str:
+    match = re.search(r'INSERT INTO\s+(\S+)', query)
+    return match.group(1) if match else None
+
 # session support: basic username + password as unique datapath
+
+
 @auth.verify_password
 def verify(username, password):
     if not (username and password):
@@ -23,6 +39,8 @@ def verify(username, password):
     return True
 
 # run chdb.query(query, format), get result from return and collect stderr
+
+
 def chdb_query_with_errmsg(query, format):
     # Redirect stdout and stderr to the buffers
     try:
@@ -44,6 +62,7 @@ def chdb_query_with_errmsg(query, format):
         print(f"An error occurred: {e}")
     return output, errmsg
 
+
 @app.route('/', methods=["GET"])
 @auth.login_required
 def clickhouse():
@@ -64,6 +83,7 @@ def clickhouse():
         return result, 200
     return errmsg, 400
 
+
 @app.route('/', methods=["POST"])
 @auth.login_required
 def play():
@@ -71,6 +91,7 @@ def play():
     body = request.get_data() or None
     format = request.args.get('default_format', default="TSV", type=str)
     database = request.args.get('database', default="", type=str)
+    temp_file = None
 
     if query is None:
         query = b""
@@ -78,13 +99,21 @@ def play():
         query = query.encode('utf-8')
 
     if body is not None:
-        # temporary hack to flatten multilines. to be replaced with raw `--file` input
-        data = f""
-        request_lines = body.decode('utf-8').strip().splitlines(True)
-        for line in request_lines:
-           data += " " + line.strip()
-        body = data.encode('utf-8')
-        query = query + " ".encode('utf-8') + body
+        if (b'INSERT INTO' in query) and (b'FORMAT' in query):
+            insert_format = extract_format(query)
+            insert_table = extract_table(query)
+            if (insert_format is not None) and (insert_table is not None):
+                with tempfile.NamedTemporaryFile(prefix='cowsdb_', suffix='.' + insert_format, dir=globals()["path"]) as temp_file:
+                    query = f"INSERT INTO {insert_table} FROM INFILE {temp_file.name} FORMAT {insert_format}"
+                    query = query.encode('utf-8')
+        else:
+            # temporary hack to flatten multilines. Assumes text-based format.
+            data = f""
+            request_lines = body.decode('utf-8').strip().splitlines(True)
+            for line in request_lines:
+                data += " " + line.strip()
+            body = data.encode('utf-8')
+            query = query + " ".encode('utf-8') + body
 
     if not query:
         return "Error: no query parameter provided", 400
@@ -94,6 +123,8 @@ def play():
         query = database + query
 
     result, errmsg = chdb_query_with_errmsg(query.strip(), format)
+    if temp_file is not None:
+        temp_file.close()
     if len(errmsg) == 0:
         return result, 200
     if len(result) > 0:
@@ -106,13 +137,16 @@ def play():
 def handle_play():
     return app.send_static_file('play.html')
 
+
 @app.route('/ping', methods=["GET"])
 def handle_ping():
     return "Ok", 200
 
+
 @app.errorhandler(404)
 def handle_404(e):
     return app.send_static_file('play.html')
+
 
 host = os.getenv('HOST', '0.0.0.0')
 port = os.getenv('PORT', 8123)
