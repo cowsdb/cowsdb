@@ -34,12 +34,21 @@ jobs:
         uses: mydea/action-wait-for-api@v1
         with:
           url: "http://localhost:8123/ping"
+      - name: Megasweel
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
       - name: WIP Bench
         run: |
-          wget --no-verbose --continue 'https://datasets.clickhouse.com/hits_compatible/hits.csv.gz'
-          gzip -d hits.csv.gz
+          curl https://datasets.clickhouse.com/hits/tsv/hits_v1.tsv.xz | unxz --threads=`nproc` > hits_v1.tsv
           curl -G --data-urlencode "query=$(cat create.sql)" 'http://test:test@localhost:8123'
-          echo hits.csv | curl -X POST --data-urlencode "query=INSERT INTO clickbench.hits FORMAT CSV" 'http://test:test@localhost:8123' --data-binary @-
+          echo hit_v1s.tsv | curl -X POST --data-urlencode "query=INSERT INTO clickbench.hits FORMAT TSV" 'http://test:test@localhost:8123' --data-binary @-
+          rm -rf hits_v1.tsv
+      - name: WIP Query
+        run: |
+           curl -G --data-urlencode "query=SELECT * FROM clickbench.hits LIMIT 10" 'http://test:test@localhost:8123'
       - name: Pull Docker logs
         run: |
          docker logs "${{ job.services.clickhouse.id }}"
