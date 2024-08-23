@@ -1,0 +1,36 @@
+name: cowsdb test runner
+on:
+  workflow_dispatch:
+    inputs:
+      clickhouse_tag:
+        description: 'BuildTag for CowsDB (latest)'
+        required: false
+      clickhouse_image:
+        description: 'Image for CowsDB (ghcr.io/cowsdb/cowsdb)'
+        required: false
+
+jobs:
+  build:
+    name: Run latest CowsDB
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      CLICKHOUSE_VERSION: "${{ github.event.inputs.clickhouse_image || 'ghcr.io/cowsdb/cowsdb' }}:${{ github.event.inputs.clickhouse_tag || 'latest' }}"
+      QRYN_VERSION: "ghcr.io/metrico/qryn:${{ github.event.inputs.qryn_tag || 'latest' }}"
+    services:
+      clickhouse:
+        image: "${{ github.event.inputs.clickhouse_image || 'ghcr.io/cowsdb/cowsdb' }}:${{ github.event.inputs.clickhouse_tag || 'latest' }}"
+        ports:
+          - 8123:8123
+        env:
+          PORT: 8123
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: WIP Bench
+        run: |
+          curl http://localhost:8123/ping
+      - name: Pull Docker logs
+        run: |
+         docker logs "${{ job.services.clickhouse.id }}"
+         docker logs "${{ job.services.qryn.id }}"
