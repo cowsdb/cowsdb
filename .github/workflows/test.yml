@@ -27,10 +27,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          repository: cowsdb/cowsdbench
+          path: .
+      - name: Wait for CowsDB API
+        uses: mydea/action-wait-for-api@v1
+        with:
+          url: "http://localhost:8123/ping"
       - name: WIP Bench
         run: |
-          curl http://localhost:8123/ping
+          wget --no-verbose --continue 'https://datasets.clickhouse.com/hits_compatible/hits.csv.gz'
+          gzip -d hits.csv.gz
+          curl -G --data-urlencode "query=$(cat create.sql)" 'http://test:test@localhost:8123'
+          echo hits.csv | curl -X POST --data-urlencode "query=INSERT INTO clickbench.hits FORMAT CSV" 'http://test:test@localhost:8123' --data-binary @-
       - name: Pull Docker logs
         run: |
          docker logs "${{ job.services.clickhouse.id }}"
-         docker logs "${{ job.services.qryn.id }}"
