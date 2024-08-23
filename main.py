@@ -99,12 +99,12 @@ def play():
         query = query.encode('utf-8')
 
     if body is not None:
-        if (b'INSERT INTO' in query) and (b'FORMAT' in query):
+        if (b'INSERT INTO' in query) and (b'FORMAT' in query) and  (b'FROM' not in query):
             insert_format = extract_format(query)
             insert_table = extract_table(query)
             if (insert_format is not None) and (insert_table is not None):
                 with tempfile.NamedTemporaryFile(prefix='cowsdb_', suffix='.' + insert_format, dir=globals()["path"]) as temp_file:
-                    query = f"INSERT INTO {insert_table} FROM INFILE {temp_file.name} FORMAT {insert_format}"
+                    query = f"INSERT INTO {insert_table} FROM INFILE '{temp_file.name}' FORMAT {insert_format}"
                     query = query.encode('utf-8')
         else:
             # temporary hack to flatten multilines. Assumes text-based format.
