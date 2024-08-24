@@ -1,4 +1,4 @@
-name: cowsdb test runner
+name: CowsDB SQL Bench
 on:
   workflow_dispatch:
     inputs:
