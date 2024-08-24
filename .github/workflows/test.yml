@@ -47,7 +47,7 @@ jobs:
           curl -G -s --data-urlencode "query=INSERT INTO clickbench.hits SELECT * FROM url('https://clickhouse-datasets.s3.yandex.net/hits/tsv/hits_v1.tsv.xz', 'TSV')" http://test:test@localhost:8123         
       - name: WIP Count
         run: |
-           curl -G --data-urlencode "query=SELECT COUNT(*) FROM datasets.hits_v1" 'http://test:test@localhost:8123'
+           curl -G --data-urlencode "query=SELECT COUNT(*) FROM clickbench.hits" 'http://test:test@localhost:8123'
       - name: WIP Queries
         run: |
            chmod +x ./*.sh
