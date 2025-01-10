@@ -32,11 +32,9 @@ signal.signal(signal.SIGTERM, signal_handler)
 @auth.verify_password
 def verify(username, password):
     if not (username and password):
-        print('stateless session')
         globals()["driver"] = chdb
     else:
         path = globals()["path"] + "/" + str(hash(username + password))
-        print('stateful session ' + path)
         if path not in connections:
             connections[path] = chdb
         globals()["driver"] = connections[path]
@@ -92,11 +90,7 @@ def play():
     if query is None:
         query = ""
     if body is not None:
-        data = ""
-        request_lines = body.decode('utf-8').strip().splitlines(True)
-        for line in request_lines:
-           data += " " + line.strip()
-        query = query + " " + data
+        query = body.decode('utf-8').strip()
     if not query:
         return "Error: no query parameter provided", 400
     if database:
