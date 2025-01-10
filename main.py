@@ -1,48 +1,36 @@
 import os
 import tempfile
 
-import chdb
-from chdb import session as chs
+from chdb import dbapi
 from flask import Flask, request
 from flask_httpauth import HTTPBasicAuth
 
 app = Flask(__name__, static_folder="public", static_url_path="")
 auth = HTTPBasicAuth()
-driver = chdb
 
 # session support: basic username + password as unique datapath
 @auth.verify_password
 def verify(username, password):
     if not (username and password):
         print('stateless session')
-        globals()["driver"] = chdb
+        globals()["conn"] = dbapi.connect(":memory:")
     else:
         path = globals()["path"] + "/" + str(hash(username + password))
         print('stateful session ' + path)
-        globals()["driver"] = chs.Session(path)
+        globals()["conn"] = dbapi.connect(path)
     return True
 
-# run chdb.query(query, format), get result from return and collect stderr
-def chdb_query_with_errmsg(query, format):
-    # Redirect stdout and stderr to the buffers
+# run query, get result from return and collect stderr
+def chdb_query_with_errmsg(query):
     try:
-        new_stderr = tempfile.TemporaryFile()
-        old_stderr_fd = os.dup(2)
-        os.dup2(new_stderr.fileno(), 2)
-        # Call the function
-        output = driver.query(query, format).bytes()
-
-        new_stderr.flush()
-        new_stderr.seek(0)
-        errmsg = new_stderr.read()
-
-        # cleanup and recover
-        new_stderr.close()
-        os.dup2(old_stderr_fd, 2)
+        cur = globals()["conn"].cursor()
+        cur.execute(query)
+        output = cur.fetchall()
+        cur.close()
+        return output, ""
     except Exception as e:
-        # An error occurred, print it to stderr
-        print(f"An error occurred: {e}")
-    return output, errmsg
+        errmsg = str(e)
+        return None, errmsg
 
 @app.route('/', methods=["GET"])
 @auth.login_required
@@ -54,14 +42,14 @@ def clickhouse():
         return app.send_static_file('play.html')
 
     if database:
-        query = f"USE {database}; {query}".encode()
+        query = f"USE {database}; {query}"
 
-    result, errmsg = chdb_query_with_errmsg(query.strip(), format)
+    result, errmsg = chdb_query_with_errmsg(query.strip())
     if len(errmsg) == 0:
-        return result, 200
+        return str(result), 200
     if len(result) > 0:
         print("warning:", errmsg)
-        return result, 200
+        return str(result), 200
     return errmsg, 400
 
 @app.route('/', methods=["POST"])
@@ -73,13 +61,12 @@ def play():
     database = request.args.get('database', default="", type=str)
 
     if query is None:
-        query = b""
+        query = ""
     else:
         query = query.encode('utf-8')
 
     if body is not None:
-        # temporary hack to flatten multilines. to be replaced with raw `--file` input
-        data = f""
+        data = ""
         request_lines = body.decode('utf-8').strip().splitlines(True)
         for line in request_lines:
            data += " " + line.strip()
@@ -93,14 +80,13 @@ def play():
         database = f"USE {database}; ".encode()
         query = database + query
 
-    result, errmsg = chdb_query_with_errmsg(query.strip(), format)
+    result, errmsg = chdb_query_with_errmsg(query.strip())
     if len(errmsg) == 0:
-        return result, 200
+        return str(result), 200
     if len(result) > 0:
         print("warning:", errmsg)
-        return result, 200
+        return str(result), 200
     return errmsg, 400
-
 
 @app.route('/play', methods=["GET"])
 def handle_play():
