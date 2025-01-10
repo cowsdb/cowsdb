@@ -6,6 +6,7 @@ from chdb import dbapi
 from flask import Flask, request
 from flask_httpauth import HTTPBasicAuth
 
+os.environ['VITE_CLICKHOUSE_SELFSERVICE'] = 'true'
 app = Flask(__name__, static_folder="public", static_url_path="")
 auth = HTTPBasicAuth()
 
