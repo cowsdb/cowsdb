@@ -1,4 +1,4 @@
-<img src="https://github.com/cowsdb/cowsdb/assets/1423657/0df1c101-4f0b-46ac-b33f-aa06cb74f11a" width=140>
+<img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=140>
 
 # 🐄 CowsDB 
 
