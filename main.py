@@ -28,6 +28,14 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 @auth.verify_password
 def verify(username, password):
+    # PATCH: Close previous session if it exists before opening a new one
+    old_driver = globals().get("driver")
+    if old_driver is not None:
+        try:
+            old_driver.close()
+        except Exception:
+            pass
+
     if not (username and password):
         # Stateless session for unauthenticated
         globals()["driver"] = chs.Session()
