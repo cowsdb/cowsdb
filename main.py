@@ -1,35 +1,50 @@
 import os
 import signal
 import tempfile
+import atexit
 from chdb import session as chs
-from flask import Flask, request, Response
+from flask import Flask, request, Response, g
 from flask_httpauth import HTTPBasicAuth
+from cachetools import TTLCache
 
 os.environ['VITE_CLICKHOUSE_SELFSERVICE'] = 'true'
 app = Flask(__name__, static_folder="public", static_url_path="")
 auth = HTTPBasicAuth()
 
-# Store connections
-connections = {}
+# Store connections with TTL (1 hour), max 1000 sessions
+timeout_seconds = int(os.getenv('SESSION_TTL', '3600'))
+connections = TTLCache(maxsize=1000, ttl=timeout_seconds)
 
-def signal_handler(signum, frame):
+# --- Cleanup logic for all sessions ---
+def cleanup_connections():
     print("\nCleaning up connections...")
-    for conn in connections.values():
+    for conn in list(connections.values()):
         try:
             conn.close()
         except Exception:
             pass
-    print("Exiting...")
-    os._exit(0)
+    print("All sessions closed.")
 
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+# Register cleanup for process exit (works for most WSGI servers)
+atexit.register(cleanup_connections)
+
+# Gunicorn worker exit hook (if running under Gunicorn)
+def on_gunicorn_worker_exit(server, worker):
+    cleanup_connections()
+
+# If running under Gunicorn, try to register the worker exit hook
+def try_register_gunicorn_hook():
+    if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', '').lower():
+        try:
+            import gunicorn.app.base
+            gunicorn.app.base.Worker.on_exit = staticmethod(on_gunicorn_worker_exit)
+        except Exception:
+            pass
+try_register_gunicorn_hook()
 
 @auth.verify_password
 def verify(username, password):
-    # PATCH: Close previous session if it exists before opening a new one
-    old_driver = globals().get("driver")
+    old_driver = getattr(g, "driver", None)
     if old_driver is not None:
         try:
             old_driver.close()
@@ -37,27 +52,26 @@ def verify(username, password):
             pass
 
     if not (username and password):
-        # Stateless session for unauthenticated
-        globals()["driver"] = chs.Session()
+        g.driver = chs.Session()
     else:
         path = globals()["path"] + "/" + str(hash(username + password))
         sess = connections.get(path)
         if sess is None:
-            # Create a new session only if it doesn't exist for this user
             sess = chs.Session()
             connections[path] = sess
-        globals()["driver"] = sess
+        g.driver = sess
     return True
 
 def chdb_query_with_errmsg(query, format):
     try:
+        driver = getattr(g, "driver", None)
+        if driver is None:
+            driver = chs.Session()
         new_stderr = tempfile.TemporaryFile()
         old_stderr_fd = os.dup(2)
         os.dup2(new_stderr.fileno(), 2)
 
-        # chdb.session.Session.query returns bytes
         result = driver.query(query, format)
-        # Ensure result is bytes
         if not isinstance(result, (bytes, str)):
             result = str(result).encode()
 
@@ -86,7 +100,6 @@ def clickhouse():
         query = f"USE {database}; {query}"
     result, errmsg = chdb_query_with_errmsg(query.strip(), format)
     if len(errmsg) == 0:
-        # Always return bytes or string
         return Response(result, content_type='text/plain'), 200
     if len(result) > 0:
         print("warning:", errmsg)
@@ -132,7 +145,9 @@ host = os.getenv('HOST', '0.0.0.0')
 port = os.getenv('PORT', 8123)
 path = os.getenv('DATA', '.chdb_data')
 
-# Initialize default driver
-driver = chs.Session()
+# ---
+# NOTE: Do NOT use app.run() in production. Use Gunicorn:
+#   gunicorn -w 4 -b 0.0.0.0:8123 main:app
+# ---
 
 app.run(host=host, port=port)
