@@ -2,7 +2,7 @@ import os
 import signal
 import tempfile
 from chdb import session as chs
-from flask import Flask, request, Response, g
+from flask import Flask, request, Response
 from flask_httpauth import HTTPBasicAuth
 
 os.environ['VITE_CLICKHOUSE_SELFSERVICE'] = 'true'
@@ -29,7 +29,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 @auth.verify_password
 def verify(username, password):
     # PATCH: Close previous session if it exists before opening a new one
-    old_driver = getattr(g, "driver", None)
+    old_driver = globals().get("driver")
     if old_driver is not None:
         try:
             old_driver.close()
@@ -38,7 +38,7 @@ def verify(username, password):
 
     if not (username and password):
         # Stateless session for unauthenticated
-        g.driver = chs.Session()
+        globals()["driver"] = chs.Session()
     else:
         path = globals()["path"] + "/" + str(hash(username + password))
         sess = connections.get(path)
@@ -46,14 +46,11 @@ def verify(username, password):
             # Create a new session only if it doesn't exist for this user
             sess = chs.Session()
             connections[path] = sess
-        g.driver = sess
+        globals()["driver"] = sess
     return True
 
 def chdb_query_with_errmsg(query, format):
     try:
-        driver = getattr(g, "driver", None)
-        if driver is None:
-            driver = chs.Session()
         new_stderr = tempfile.TemporaryFile()
         old_stderr_fd = os.dup(2)
         os.dup2(new_stderr.fileno(), 2)
@@ -134,5 +131,8 @@ def handle_404(e):
 host = os.getenv('HOST', '0.0.0.0')
 port = os.getenv('PORT', 8123)
 path = os.getenv('DATA', '.chdb_data')
+
+# Initialize default driver
+driver = chs.Session()
 
 app.run(host=host, port=port)
