@@ -42,7 +42,7 @@ jobs:
           sudo rm -rf "$AGENT_TOOLSDIRECTORY"
       - name: WIP Wait for it
         run: |
-          curl -G -s --data-urlencode "query=SELECT version(), now()" http://test:test@localhost:8123
+          curl -G --data-urlencode "query=SELECT version(), now()" http://test:test@localhost:8123
       - name: WIP Load Data
         run: |
           curl -G -s --data-urlencode "query=CREATE DATABASE IF NOT EXISTS clickbench" http://test:test@localhost:8123
@@ -51,6 +51,9 @@ jobs:
       - name: WIP Count
         run: |
            curl -G --data-urlencode "query=SELECT COUNT(*) FROM clickbench.hits" 'http://test:test@localhost:8123'
+      - name: WIP Select Test
+        run: |
+           curl -G --data-urlencode "query=SELECT * FROM clickbench.hits LIMIT 1" 'http://test:test@localhost:8123'
       - name: WIP Queries
         run: |
            chmod +x ./*.sh
