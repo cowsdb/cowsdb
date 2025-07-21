@@ -1,17 +1,12 @@
-<img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=140>
+# <img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=140> CowsDB
 
-# CowsDB 🐄
-
-**CowsDB** is a powerful server wrapper for [chdb](https://github.com/auxten/chdb) that provides both **ClickHouse HTTP API** and **Native Protocol** support. It enables you to use chdb (an in-process SQL OLAP engine) as a drop-in replacement for ClickHouse with full protocol compatibility.
+> CowsDB prentends to be ClickHouse and can be used with any ClickHouse client for serverless ops
 
 ## ✨ Features
 
 - **🔌 ClickHouse HTTP API Compatibility** - Full HTTP API support on port 8123
 - **⚡ Native Protocol Support** - Binary protocol support on port 9000
-- **🔐 Authentication & Session Management** - Secure user sessions with TTL
 - **📊 Multiple Output Formats** - TSV, JSON, CSV, and Native binary formats
-- **🚀 High Performance** - Built on chdb's optimized engine
-- **🛡️ Production Ready** - Graceful shutdown, connection cleanup, and error handling
 
 ## 🚀 Quick Start
 
@@ -298,46 +293,9 @@ curl -G --data-urlencode "query=SELECT 1" http://localhost:8123
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-### Development Setup
-```bash
-# Clone and setup
-git clone https://github.com/your-username/cowsdb.git
-cd cowsdb
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Run tests
-python run_tests.py tests
-
-# Run demo
-python run_tests.py demo
-
-# Run both tests and demo
-python run_tests.py all
-
-# Or run directly from test directory
-python test/test_suite.py
-python test/demo.py
-```
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+CowsDB is licensed under the AGPLv3 license and is not affiliated in any way with ClickHouse Inc.
 
-## 🙏 Acknowledgments
 
-- [chdb](https://github.com/auxten/chdb) - The amazing in-process SQL OLAP engine
-- [ClickHouse](https://clickhouse.com/) - For the protocol specifications
-- [Flask](https://flask.palletsprojects.com/) - Web framework
-- [clickhouse-driver](https://github.com/mymarilyn/clickhouse-driver) - Python client library
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/your-username/cowsdb/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/cowsdb/discussions)
-- **Documentation**: [Wiki](https://github.com/your-username/cowsdb/wiki)
-
----
-
-**Made with ❤️ by the CowsDB Team** 
