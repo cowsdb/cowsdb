@@ -11,8 +11,11 @@
 - **📊 Multiple Output Formats** - TSV, JSON, CSV, and Native binary formats
 
 ## 🚀 Quick Start
+```
+docker run --rm -p 8123:8123 -p 9000:9000 ghcr.io/cowsdb/cowsdb:latest
+```
 
-### Installation
+### Local Installation
 
 1. **Clone the repository:**
    ```bash
