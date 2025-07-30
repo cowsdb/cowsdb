@@ -13,6 +13,8 @@ import struct
 import signal
 from typing import List, Tuple
 
+os.environ['VITE_CLICKHOUSE_SELFSERVICE'] = 'true'
+
 from flask import Flask, request, Response, g
 from flask_httpauth import HTTPBasicAuth
 from cachetools import TTLCache
@@ -28,7 +30,7 @@ connections = TTLCache(maxsize=100, ttl=3600)  # 1 hour TTL
 native_server = None
 
 # Flask app setup
-app = Flask(__name__)
+app = Flask(__name__, static_folder="public", static_url_path="")
 auth = HTTPBasicAuth()
 
 # Native protocol constants
@@ -567,7 +569,7 @@ def chdb_query_with_errmsg(query, format):
 def clickhouse():
     query = request.args.get('query', '')
     if not query:
-        return Response("No query provided", status=400)
+        return app.send_static_file('play.html')
     
     format = request.args.get('format', 'TSV')
     result, errmsg = chdb_query_with_errmsg(query, format)
@@ -602,7 +604,7 @@ def handle_ping():
 
 @app.errorhandler(404)
 def handle_404(e):
-    return Response("Not found", status=404)
+    return app.send_static_file('play.html')
 
 def start_native_server():
     """Start the native protocol server in a separate thread"""
