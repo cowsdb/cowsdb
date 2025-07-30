@@ -2,6 +2,7 @@
 """
 CowsDB - ClickHouse HTTP API and Native Protocol Server
 A server wrapper for chdb that emulates ClickHouse HTTP API and Native Protocol
+Refactored for chdb 3.4.0+ which doesn't support multiple concurrent sessions
 """
 
 import os
@@ -17,7 +18,6 @@ os.environ['VITE_CLICKHOUSE_SELFSERVICE'] = 'true'
 
 from flask import Flask, request, Response, g
 from flask_httpauth import HTTPBasicAuth
-from cachetools import TTLCache
 
 import chdb.session as chs
 
@@ -25,8 +25,7 @@ import chdb.session as chs
 host = "0.0.0.0"
 port = 8123
 native_port = 9000
-path = "/tmp/cowsdb"
-connections = TTLCache(maxsize=100, ttl=3600)  # 1 hour TTL
+base_path = "/tmp/cowsdb"
 native_server = None
 
 # Flask app setup
@@ -121,6 +120,34 @@ class DataBlock:
         
         return result
 
+def get_user_session_path(username: str = None, password: str = None) -> str:
+    """Get the session path for a user based on authentication"""
+    if not (username and password):
+        # Anonymous user gets a default path
+        return os.path.join(base_path, "anonymous")
+    else:
+        # Authenticated users get a path based on their credentials hash
+        user_hash = str(hash(username + password))
+        return os.path.join(base_path, user_hash)
+
+def execute_query_with_session(query: str, format: str = "TSV", username: str = None, password: str = None):
+    """Execute a query using a fresh session for the user"""
+    session_path = get_user_session_path(username, password)
+    
+    # Ensure the directory exists
+    os.makedirs(session_path, exist_ok=True)
+    
+    # Create a new session for this query
+    session = chs.Session(path=session_path)
+    
+    try:
+        # Execute the query
+        result = session.query(query, format)
+        return result
+    finally:
+        # Always close the session
+        session.close()
+
 class NativeProtocolServer:
     def __init__(self, host='0.0.0.0', port=9000):
         self.host = host
@@ -164,20 +191,6 @@ class NativeProtocolServer:
         if self.server_socket:
             self.server_socket.close()
         print("Native protocol server stopped")
-    
-    def get_session(self):
-        """Get or create a session based on authentication, same as HTTP API"""
-        if not (self.current_user and self.current_password):
-            # No authentication - create a new session
-            return chs.Session()
-        else:
-            # Use authentication-based session management
-            path = globals()["path"] + "/" + str(hash(self.current_user + self.current_password))
-            sess = connections.get(path)
-            if sess is None:
-                sess = chs.Session()
-                connections[path] = sess
-            return sess
     
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
@@ -312,7 +325,7 @@ class NativeProtocolServer:
                         quota_key = self.read_binary_str(client_socket)
                     
                     # Read distributed depth if supported
-                    if client_revision >= 54448:  # DBMS_MIN_PROTOCOL_VERSION_WITH_DISTRIBUTED_DEPTH
+                    if client_revision >= 54448:  # DBMS_MIN_PROTOCOL_VERSION_WITH_DISTRIBUTED_DEPTH:
                         distributed_depth = self.read_varint(client_socket)
             
             # Read settings
@@ -354,15 +367,12 @@ class NativeProtocolServer:
                     flags = self.read_uint8(client_socket)
                     param_value = self.read_binary_str(client_socket)
             
-            # Execute query using chdb with proper session management
+            # Execute query using the new session management approach
             try:
-                # Get the appropriate session based on authentication
-                session = self.get_session()
+                # Execute query with proper session management
+                result = execute_query_with_session(query, "Native", self.current_user, self.current_password)
                 
-                # Use ClickHouse Native format to get binary data in the correct format
-                result = session.query(query, "Native")
-                
-                # Check if result has error - this might be where the error happens
+                # Check if result has error
                 try:
                     has_error = result.has_error()
                     
@@ -484,52 +494,11 @@ class NativeProtocolServer:
         self.write_varint(len(value), sock)
         sock.send(value)
 
-def cleanup_connections():
-    """Clean up all connections"""
-    print("Cleaning up connections...")
-    for path, session in connections.items():
-        try:
-            session.close()
-        except Exception as e:
-            print(f"Error closing session {path}: {e}")
-    connections.clear()
-    print("All sessions closed.")
-
-def try_register_gunicorn_hook():
-    """Try to register Gunicorn worker hook for cleanup"""
-    try:
-        from gunicorn.workers.sync import SyncWorker
-        if hasattr(SyncWorker, 'worker_int'):
-            def worker_int(worker):
-                cleanup_connections()
-            SyncWorker.worker_int = worker_int
-            print("Gunicorn hook registered successfully")
-        else:
-            print("Gunicorn hook not available (worker_int not found)")
-    except Exception as e:
-        print(f"Could not register Gunicorn hook: {e}")
-
 @auth.verify_password
 def verify(username, password):
-    # PATCH: Close previous session if it exists before opening a new one
-    old_driver = getattr(g, "driver", None)
-    if old_driver is not None:
-        try:
-            old_driver.close()
-        except Exception:
-            pass
-
-    if not (username and password):
-        # Stateless session for unauthenticated
-        g.driver = chs.Session()
-    else:
-        path = globals()["path"] + "/" + str(hash(username + password))
-        sess = connections.get(path)
-        if sess is None:
-            # Create a new session only if it doesn't exist for this user
-            sess = chs.Session()
-            connections[path] = sess
-        g.driver = sess
+    # Store authentication info in Flask's g object for use in query execution
+    g.username = username
+    g.password = password
     return True
 
 def chdb_query_with_errmsg(query, format):
@@ -538,18 +507,12 @@ def chdb_query_with_errmsg(query, format):
         old_stderr_fd = os.dup(2)
         os.dup2(new_stderr.fileno(), 2)
 
-        # Get the driver from Flask's g object
-        driver = getattr(g, "driver", None)
-        if driver is None:
-            # Fallback to creating a new session
-            driver = chs.Session()
-            g.driver = driver
-
-        # chdb.session.Session.query returns bytes
-        result = driver.query(query, format)
-        # Ensure result is bytes
-        if not isinstance(result, (bytes, str)):
-            result = str(result).encode()
+        # Get authentication info from Flask's g object
+        username = getattr(g, "username", None)
+        password = getattr(g, "password", None)
+        
+        # Execute query with proper session management
+        result = execute_query_with_session(query, format, username, password)
 
         new_stderr.flush()
         new_stderr.seek(0)
@@ -622,7 +585,6 @@ def signal_handler(signum, frame):
     """Handle shutdown signals"""
     print(f"\nShutting down servers...")
     stop_native_server()
-    cleanup_connections()
     print("Exiting...")
     sys.exit(0)
 
@@ -630,9 +592,6 @@ if __name__ == "__main__":
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Try to register Gunicorn hook
-    try_register_gunicorn_hook()
     
     print("Starting CowsDB server...")
     print(f"HTTP API: http://{host}:{port}")
@@ -643,4 +602,4 @@ if __name__ == "__main__":
     native_thread.start()
     
     # Start Flask app
-    app.run(host=host, port=port, debug=False)
+    app.run(host=host, port=port, debug=False) 
