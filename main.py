@@ -143,6 +143,11 @@ def execute_query_with_session(query: str, format: str = "TSV", username: str = 
     try:
         # Execute the query
         result = session.query(query, format)
+        
+        # Ensure result is bytes (same as original code)
+        if not isinstance(result, (bytes, str)):
+            result = str(result).encode()
+        
         return result
     finally:
         # Always close the session
