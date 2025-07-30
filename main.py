@@ -532,7 +532,7 @@ def chdb_query_with_errmsg(query, format):
 def clickhouse():
     query = request.args.get('query', '')
     if not query:
-        return app.send_static_file('play.html')
+        return app.send_static_file('index.html')
     
     format = request.args.get('format', 'TSV')
     result, errmsg = chdb_query_with_errmsg(query, format)
@@ -559,7 +559,7 @@ def play():
 
 @app.route('/play', methods=["GET"])
 def handle_play():
-    return app.send_static_file('play.html')
+    return app.send_static_file('index.html')
 
 @app.route('/ping', methods=["GET"])
 def handle_ping():
@@ -567,7 +567,7 @@ def handle_ping():
 
 @app.errorhandler(404)
 def handle_404(e):
-    return app.send_static_file('play.html')
+    return app.send_static_file('index.html')
 
 def start_native_server():
     """Start the native protocol server in a separate thread"""
