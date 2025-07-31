@@ -141,13 +141,8 @@ def execute_query_with_session(query: str, format: str = "TSV", username: str = 
     session = chs.Session(path=session_path)
     
     try:
-        # Execute the query
-        result = session.query(query, format)
-        
-        # Ensure result is bytes (same as original code)
-        if not isinstance(result, (bytes, str)):
-            result = str(result).encode()
-        
+        # Execute the query and get bytes directly (like original)
+        result = session.query(query, format).bytes()
         return result
     finally:
         # Always close the session
@@ -535,32 +530,60 @@ def chdb_query_with_errmsg(query, format):
 @app.route('/', methods=["GET"])
 @auth.login_required
 def clickhouse():
-    query = request.args.get('query', '')
+    query = request.args.get('query', default="", type=str)
+    format = request.args.get('default_format', default="TSV", type=str)
+    database = request.args.get('database', default="", type=str)
+    
     if not query:
         return app.send_static_file('index.html')
-    
-    format = request.args.get('format', 'TSV')
-    result, errmsg = chdb_query_with_errmsg(query, format)
-    
-    if errmsg:
-        return Response(errmsg, status=500, mimetype='text/plain')
-    
-    return Response(result, mimetype='text/plain')
+
+    if database:
+        query = f"USE {database}; {query}"
+
+    result, errmsg = chdb_query_with_errmsg(query.strip(), format)
+    if len(errmsg) == 0:
+        return result, 200
+    if len(result) > 0:
+        print("warning:", errmsg)
+        return result, 200
+    return errmsg, 400
 
 @app.route('/', methods=["POST"])
 @auth.login_required
 def play():
-    query = request.get_data(as_text=True)
+    query = request.args.get('query', default=None, type=str)
+    body = request.get_data() or None
+    format = request.args.get('default_format', default="TSV", type=str)
+    database = request.args.get('database', default="", type=str)
+
+    if query is None:
+        query = b""
+    else:
+        query = query.encode('utf-8')
+
+    if body is not None:
+        # temporary hack to flatten multilines. to be replaced with raw `--file` input
+        data = f""
+        request_lines = body.decode('utf-8').strip().splitlines(True)
+        for line in request_lines:
+           data += " " + line.strip()
+        body = data.encode('utf-8')
+        query = query + " ".encode('utf-8') + body
+
     if not query:
-        return Response("No query provided", status=400)
-    
-    format = request.args.get('format', 'TSV')
-    result, errmsg = chdb_query_with_errmsg(query, format)
-    
-    if errmsg:
-        return Response(errmsg, status=500, mimetype='text/plain')
-    
-    return Response(result, mimetype='text/plain')
+        return "Error: no query parameter provided", 400
+
+    if database:
+        database = f"USE {database}; ".encode()
+        query = database + query
+
+    result, errmsg = chdb_query_with_errmsg(query.strip(), format)
+    if len(errmsg) == 0:
+        return result, 200
+    if len(result) > 0:
+        print("warning:", errmsg)
+        return result, 200
+    return errmsg, 400
 
 @app.route('/play', methods=["GET"])
 def handle_play():

@@ -16,7 +16,7 @@ RUN apt update && apt install -y binutils wget \
   && strip /usr/local/lib/python3.11/site-packages/chdb/_chdb.cpython-*-*-linux-gnu.so \
   && rm -rf /var/lib/apt/lists/* && rm -rf ~/.cache/pip/*
 ADD main.py .
-# COPY --from=build /app/dist ./public
+ADD public ./public
 EXPOSE 8123
 EXPOSE 9000
 CMD ["python3","./main.py"]
