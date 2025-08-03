@@ -44,6 +44,10 @@ class ClientPacketTypes:
     CANCEL = 3
     PING = 4
     TABLES_STATUS_REQUEST = 5
+    # Additional packet types that might be sent by the client
+    CLIENT_INFO = 6
+    SETTINGS = 7
+    EXTENSION = 8
 
 class ServerPacketTypes:
     HELLO = 0
@@ -278,6 +282,18 @@ class NativeProtocolServer:
                         # Handle subsequent HELLO packets (re-authentication)
                         if not self.perform_handshake(client_socket):
                             break
+                    elif packet_type == ClientPacketTypes.CLIENT_INFO:
+                        print(f"   Handling CLIENT_INFO from {address}")
+                        # Skip client info packet for now
+                        pass
+                    elif packet_type == ClientPacketTypes.SETTINGS:
+                        print(f"   Handling SETTINGS from {address}")
+                        # Skip settings packet for now
+                        pass
+                    elif packet_type == ClientPacketTypes.EXTENSION:
+                        print(f"   Handling EXTENSION from {address}")
+                        # Skip extension packet for now
+                        pass
                     else:
                         print(f"❌ Unsupported packet type: {packet_type} from {address}")
                         break
@@ -495,6 +511,27 @@ class NativeProtocolServer:
                         # Send exception
                         self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                         self.write_binary_str(f"Failed to get query data: {str(e)}", client_socket)
+                elif result is None or len(result) == 0:
+                    # Empty result - still send proper response structure
+                    print(f"   Query returned empty result, sending empty data block")
+                    try:
+                        # Send empty data packet
+                        self.write_varint(ServerPacketTypes.DATA, client_socket)
+                        self.write_binary_str("", client_socket)  # table name
+                        self.write_varint(0, client_socket)  # block info
+                        
+                        # Send empty block (0 columns, 0 rows)
+                        empty_block = struct.pack('<II', 0, 0)  # 0 columns, 0 rows
+                        client_socket.send(empty_block)
+                        print(f"   Sent empty data block")
+                        
+                        # Send end of stream
+                        self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
+                        print(f"   Query response completed successfully")
+                    except Exception as e:
+                        print(f"❌ Error sending empty data: {e}")
+                        self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
+                        self.write_binary_str(f"Failed to send empty data: {str(e)}", client_socket)
                 else:
                     print(f"❌ Unexpected result type: {type(result)}")
                     # This shouldn't happen, but handle it gracefully
