@@ -142,8 +142,36 @@ def execute_query_with_session(query: str, format: str = "TSV", username: str = 
     
     try:
         # Execute the query and get bytes directly (like original)
-        result = session.query(query, format).bytes()
-        return result
+        print(f"🔍 Executing query: {query}")
+        print(f"   Session path: {session_path}")
+        
+        result = session.query(query, format)
+        
+        # Check if the result has an error
+        try:
+            if hasattr(result, 'has_error') and result.has_error():
+                error_msg = result.error_message() if hasattr(result, 'error_message') else "Unknown error"
+                print(f"❌ Query returned error: {error_msg}")
+                print(f"   Query: {query}")
+                print(f"   Format: {format}")
+                print(f"   User: {username}")
+                return b""  # Return empty bytes for errors
+        except Exception as check_error:
+            print(f"⚠️  Could not check for errors: {check_error}")
+        
+        # Get the bytes
+        bytes_result = result.bytes()
+        print(f"✅ Query successful, returned {len(bytes_result)} bytes")
+        return bytes_result
+        
+    except Exception as e:
+        # Log the error to help with debugging
+        print(f"❌ Query execution error: {e}")
+        print(f"   Query: {query}")
+        print(f"   Format: {format}")
+        print(f"   User: {username}")
+        print(f"   Session path: {session_path}")
+        return b""  # Return empty bytes for errors
     finally:
         # Always close the session
         session.close()
@@ -157,6 +185,7 @@ class NativeProtocolServer:
         self.client_revision = None  # Store client revision from handshake
         self.current_user = None
         self.current_password = None
+        self.client_sessions = {}  # Store sessions per client connection
         
     def start(self):
         """Start the native protocol server"""
@@ -194,16 +223,25 @@ class NativeProtocolServer:
     
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
+        client_session = None
         try:
             if not self.perform_handshake(client_socket):
                 return
+            
+            # Create a session for this client
+            session_path = get_user_session_path(self.current_user, self.current_password)
+            os.makedirs(session_path, exist_ok=True)
+            client_session = chs.Session(path=session_path)
+            self.client_sessions[address] = client_session
+            
+            print(f"Created session for client {address} at {session_path}")
             
             while self.running:
                 try:
                     packet_type = self.read_varint(client_socket)
                     
                     if packet_type == ClientPacketTypes.QUERY:
-                        self.handle_query(client_socket)
+                        self.handle_query(client_socket, address)
                     elif packet_type == ClientPacketTypes.PING:
                         self.handle_ping(client_socket)
                     elif packet_type == ClientPacketTypes.CANCEL:
@@ -223,6 +261,14 @@ class NativeProtocolServer:
         except Exception as e:
             print(f"Error with native client {address}: {e}")
         finally:
+            # Clean up session
+            if client_session:
+                try:
+                    client_session.close()
+                    del self.client_sessions[address]
+                    print(f"Closed session for client {address}")
+                except:
+                    pass
             client_socket.close()
             print(f"Native connection closed for {address}")
     
@@ -290,7 +336,7 @@ class NativeProtocolServer:
             print(f"Native handshake failed: {e}")
             return False
     
-    def handle_query(self, client_socket: socket.socket):
+    def handle_query(self, client_socket: socket.socket, address: tuple):
         """Handle a query from the client"""
         try:
             # Use the actual client revision from handshake
@@ -367,10 +413,21 @@ class NativeProtocolServer:
                     flags = self.read_uint8(client_socket)
                     param_value = self.read_binary_str(client_socket)
             
-            # Execute query using the new session management approach
+            # Execute query using the client's session
             try:
-                # Execute query with proper session management
-                result = execute_query_with_session(query, "Native", self.current_user, self.current_password)
+                print(f"🔍 Executing native query: {query}")
+                
+                # Get the client's session
+                if address not in self.client_sessions:
+                    print(f"❌ No session found for client {address}")
+                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
+                    self.write_binary_str("No session found", client_socket)
+                    return
+                
+                client_session = self.client_sessions[address]
+                
+                # Execute query using the client's session
+                result = client_session.query(query, "Native").bytes()
                 
                 # Since execute_query_with_session returns bytes directly, 
                 # we assume success if we get bytes (no error checking needed)
@@ -401,6 +458,9 @@ class NativeProtocolServer:
                     return
                 
             except Exception as e:
+                # Log the error
+                print(f"❌ Native query execution failed: {e}")
+                print(f"   Query: {query}")
                 # Send exception
                 self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                 # Send error as string, not binary
@@ -427,18 +487,27 @@ class NativeProtocolServer:
     # Protocol helper methods
     def read_uint8(self, sock: socket.socket) -> int:
         """Read an 8-bit unsigned integer"""
-        return sock.recv(1)[0]
+        data = sock.recv(1)
+        if not data:
+            raise ConnectionError("Connection closed by peer")
+        return data[0]
     
     def read_uint64(self, sock: socket.socket) -> int:
         """Read a 64-bit unsigned integer"""
-        return struct.unpack('<Q', sock.recv(8))[0]
+        data = sock.recv(8)
+        if len(data) != 8:
+            raise ConnectionError("Connection closed by peer")
+        return struct.unpack('<Q', data)[0]
     
     def read_varint(self, sock: socket.socket) -> int:
         """Read a variable-length integer"""
         result = 0
         shift = 0
         while True:
-            byte = sock.recv(1)[0]
+            data = sock.recv(1)
+            if not data:
+                raise ConnectionError("Connection closed by peer")
+            byte = data[0]
             result |= (byte & 0x7F) << shift
             if (byte & 0x80) == 0:
                 break
@@ -461,7 +530,10 @@ class NativeProtocolServer:
         length = self.read_varint(sock)
         if length == 0:
             return ""
-        return sock.recv(length).decode('utf-8')
+        data = sock.recv(length)
+        if len(data) != length:
+            raise ConnectionError("Connection closed by peer")
+        return data.decode('utf-8')
     
     def write_binary_str(self, value: str, sock: socket.socket):
         """Write a binary string"""

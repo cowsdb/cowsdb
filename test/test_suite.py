@@ -305,6 +305,18 @@ class CowsDBTestSuite:
         for query, description in test_queries:
             self.test_native_query(query, description)
     
+    def test_native_ddl_queries(self):
+        """Test native protocol with DDL queries (CREATE DATABASE, CREATE TABLE, etc.)"""
+        ddl_queries = [
+            ("CREATE DATABASE IF NOT EXISTS `qryn`", "CREATE DATABASE"),
+            ("CREATE TABLE IF NOT EXISTS test_table (id UInt32, name String) ENGINE=Memory", "CREATE TABLE"),
+            ("DROP TABLE IF EXISTS test_table", "DROP TABLE"),
+            ("DROP DATABASE IF EXISTS `qryn`", "DROP DATABASE"),
+        ]
+        
+        for query, description in ddl_queries:
+            self.test_native_query(query, description)
+    
     def test_session_management(self):
         """Test session management and authentication"""
         try:
@@ -354,6 +366,7 @@ class CowsDBTestSuite:
             print("-" * 30)
             self.test_native_handshake()
             self.test_native_data_types()
+            self.test_native_ddl_queries()
             
             # Summary
             print("\n📊 Test Results Summary")
