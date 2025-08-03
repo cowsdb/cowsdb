@@ -192,7 +192,7 @@ class CowsDBTestSuite:
             write_varint(54468, sock)  # revision
             write_binary_str("default", sock)  # database
             write_binary_str("default", sock)  # user
-            write_binary_str("", sock)  # password
+            write_binary_str("default", sock)  # password
             
             # Read server hello
             packet_type = read_varint(sock)
@@ -233,7 +233,7 @@ class CowsDBTestSuite:
             write_varint(54468, sock)  # revision
             write_binary_str("default", sock)  # database
             write_binary_str("default", sock)  # user
-            write_binary_str("", sock)  # password
+            write_binary_str("default", sock)  # password
             
             # Read server hello
             packet_type = read_varint(sock)

@@ -298,7 +298,7 @@ class NativeProtocolServer:
             self.client_revision = client_revision
             
             print(f"Native client: {client_name} v{client_version_major}.{client_version_minor} (rev {client_revision})")
-            print(f"User: {user}, Database: {database}")
+            print(f"User: {user}, Database: {database}, Password: '{password}'")
             
             # Calculate used revision
             used_revision = min(client_revision, DBMS_REVISION)
