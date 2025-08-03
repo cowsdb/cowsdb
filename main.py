@@ -231,8 +231,7 @@ class NativeProtocolServer:
         try:
             while self.running:
                 client_socket, address = self.server_socket.accept()
-                print(f"🔌 NATIVE CONNECTION ACCEPTED from {address}")
-                print(f"   Starting client handler thread...")
+                print(f"Native connection from {address}")
                 
                 client_thread = threading.Thread(
                     target=self.handle_client,
@@ -255,7 +254,6 @@ class NativeProtocolServer:
     
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
-        print(f"🔍 CLIENT HANDLER STARTED for {address}")
         try:
             print(f"🔍 New native client connection from {address}")
             
@@ -264,7 +262,6 @@ class NativeProtocolServer:
                 return
             
             print(f"✅ Native client {address} authenticated as {self.current_user}:{self.current_password}")
-            print(f"   Client revision: {self.client_revision}")
             
             while self.running:
                 try:
@@ -321,7 +318,6 @@ class NativeProtocolServer:
     
     def perform_handshake(self, client_socket: socket.socket) -> bool:
         """Perform protocol handshake with client"""
-        print(f"🤝 HANDSHAKE STARTED")
         try:
             print(f"🔍 Starting native handshake...")
             
@@ -399,7 +395,6 @@ class NativeProtocolServer:
     
     def handle_query(self, client_socket: socket.socket, address: tuple):
         """Handle a query from the client"""
-        print(f"📝 QUERY HANDLER STARTED for {address}")
         try:
             print(f"🔍 Starting query handling...")
             
@@ -497,7 +492,8 @@ class NativeProtocolServer:
                 # Execute query using the persistent session
                 print(f"   Executing query with chdb...")
                 try:
-                    result = session.query(query, "Native").bytes()
+                    # Try TSV format first, then we'll convert to native protocol format
+                    result = session.query(query, "TSV").bytes()
                     print(f"   Query executed successfully, got {len(result)} bytes")
                 except Exception as chdb_error:
                     print(f"❌ chdb query execution failed: {chdb_error}")
@@ -515,17 +511,54 @@ class NativeProtocolServer:
                     # Success - we have data
                     try:
                         print(f"   Sending DATA packet...")
-                        # result is already bytes from execute_query_with_session
-                        native_data = result
                         
                         # Send data packet with proper ClickHouse native protocol structure
                         self.write_varint(ServerPacketTypes.DATA, client_socket)
                         self.write_binary_str("", client_socket)  # table name
                         self.write_varint(0, client_socket)  # block info
                         
-                        # Send the native binary data as the block content
-                        client_socket.send(native_data)
-                        print(f"   Sent {len(native_data)} bytes of data")
+                        # Convert TSV result to proper native protocol format
+                        # For now, let's send a simple empty block for testing
+                        print(f"   Converting TSV result to native format...")
+                        
+                        # Create a simple data block: 1 column, 1 row with the result
+                        tsv_data = result.decode('utf-8').strip()
+                        if tsv_data:
+                            # Parse TSV data and create proper native block
+                            lines = tsv_data.split('\n')
+                            if lines and lines[0]:
+                                # Simple approach: create a block with one column and one row
+                                block_data = struct.pack('<II', 1, 1)  # 1 column, 1 row
+                                
+                                # Column name
+                                col_name = "result"
+                                col_name_bytes = col_name.encode('utf-8')
+                                block_data += struct.pack('<I', len(col_name_bytes))
+                                block_data += col_name_bytes
+                                
+                                # Column type
+                                col_type = "String"
+                                col_type_bytes = col_type.encode('utf-8')
+                                block_data += struct.pack('<I', len(col_type_bytes))
+                                block_data += col_type_bytes
+                                
+                                # Data value
+                                value_bytes = lines[0].encode('utf-8')
+                                block_data += struct.pack('<I', len(value_bytes))
+                                block_data += value_bytes
+                                
+                                client_socket.send(block_data)
+                                print(f"   Sent {len(block_data)} bytes of native data")
+                            else:
+                                # Empty result
+                                empty_block = struct.pack('<II', 0, 0)  # 0 columns, 0 rows
+                                client_socket.send(empty_block)
+                                print(f"   Sent empty data block")
+                        else:
+                            # Empty result
+                            empty_block = struct.pack('<II', 0, 0)  # 0 columns, 0 rows
+                            client_socket.send(empty_block)
+                            print(f"   Sent empty data block")
                         
                         # Send end of stream
                         print(f"   Sending END_OF_STREAM...")
@@ -533,6 +566,8 @@ class NativeProtocolServer:
                         print(f"   Query response completed successfully")
                     except Exception as e:
                         print(f"❌ Error sending data: {e}")
+                        import traceback
+                        traceback.print_exc()
                         # Send exception
                         self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                         self.write_binary_str(f"Failed to get query data: {str(e)}", client_socket)
