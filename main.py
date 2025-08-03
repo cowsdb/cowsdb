@@ -12,6 +12,7 @@ import threading
 import socket
 import struct
 import signal
+import zlib
 from typing import List, Tuple
 
 os.environ['VITE_CLICKHOUSE_SELFSERVICE'] = 'true'
@@ -181,6 +182,11 @@ def execute_query_with_session(query: str, format: str = "TSV", username: str = 
         print(f"🔍 Executing query: {query}")
         print(f"   User: {username or 'default'}")
         
+        # Check if session is valid
+        if session is None:
+            print(f"❌ Session is None for user {username}")
+            return b""
+        
         result = session.query(query, format)
         
         # Check if the result has an error
@@ -206,6 +212,8 @@ def execute_query_with_session(query: str, format: str = "TSV", username: str = 
         print(f"   Query: {query}")
         print(f"   Format: {format}")
         print(f"   User: {username}")
+        import traceback
+        traceback.print_exc()
         return b""  # Return empty bytes for errors
 
 class NativeProtocolServer:
@@ -214,123 +222,125 @@ class NativeProtocolServer:
         self.port = port
         self.server_socket = None
         self.running = False
-        self.client_revision = None  # Store client revision from handshake
-        self.current_user = None
-        self.current_password = None
+        self.active_connections = set()  # Track active connections
+        self.connection_lock = threading.Lock()  # Thread safety for connection tracking
         
     def start(self):
         """Start the native protocol server"""
+        print(f"DEBUG: Creating socket for {self.host}:{self.port}")
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Set socket timeout to prevent blocking indefinitely
+        self.server_socket.settimeout(1.0)
+        print(f"DEBUG: Binding socket to {self.host}:{self.port}")
         self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(5)
+        print(f"DEBUG: Starting to listen on {self.host}:{self.port}")
+        self.server_socket.listen(10)  # Increased backlog for better concurrency
         self.running = True
         
         print(f"Native protocol server listening on {self.host}:{self.port}")
         
         try:
             while self.running:
-                client_socket, address = self.server_socket.accept()
-                print(f"Native connection from {address}")
-                
-                client_thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, address)
-                )
-                client_thread.daemon = True
-                client_thread.start()
-                
+                try:
+                    print(f"DEBUG: Waiting for connection on {self.host}:{self.port}")
+                    client_socket, address = self.server_socket.accept()
+                    print(f"Native connection from {address}")
+                    
+                    # Set socket options for better performance
+                    client_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    client_socket.settimeout(30.0)  # 30 second timeout for client operations
+                    
+                    # Track the connection
+                    with self.connection_lock:
+                        self.active_connections.add(client_socket)
+                    
+                    client_thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, address)
+                    )
+                    client_thread.daemon = True
+                    client_thread.start()
+                    
+                except socket.timeout:
+                    # Timeout is expected, continue listening
+                    continue
+                except Exception as e:
+                    if self.running:  # Only log if we're still supposed to be running
+                        print(f"Native server error: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    
         except Exception as e:
             print(f"Native server error: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             self.stop()
     
     def stop(self):
         """Stop the server"""
         self.running = False
+        
+        # Close all active connections
+        with self.connection_lock:
+            for client_socket in self.active_connections:
+                try:
+                    client_socket.close()
+                except:
+                    pass
+            self.active_connections.clear()
+        
         if self.server_socket:
             self.server_socket.close()
         print("Native protocol server stopped")
     
-    def handle_protocol_packet(self, client_socket: socket.socket, address: tuple):
-        """Handle protocol packets more robustly"""
-        try:
-            # Read packet type
-            packet_type = self.read_varint(client_socket)
-            
-            # After handshake, the client sends QUERY (1), not HELLO (0)
-            # If we get packet type 0, it means we're reading from the wrong position
-            # The client sends: HELLO (0) -> QUERY (1) in sequence
-            if packet_type == 0:
-                # Try to read the next byte to see what's actually there
-                try:
-                    next_byte = client_socket.recv(1)
-                    if next_byte:
-                        if next_byte[0] == 1:
-                            # Handle as QUERY
-                            self.handle_query(client_socket, address)
-                            return True
-                        else:
-                            return False
-                except Exception as e:
-                    return False
-                
-                return False
-
-            if packet_type == ClientPacketTypes.QUERY:
-                self.handle_query(client_socket, address)
-            elif packet_type == ClientPacketTypes.DATA:
-                # Handle data packet (for INSERT operations)
-                # For now, just read and discard the data
-                try:
-                    # Read table name
-                    table_name = self.read_binary_str(client_socket)
-                    
-                    # Read block info
-                    block_info = self.read_uint8(client_socket)
-                    
-                    # Read number of columns
-                    n_columns = self.read_varint(client_socket)
-                    
-                    # Read number of rows
-                    n_rows = self.read_varint(client_socket)
-                    
-                    # For now, just skip the data
-                    
-                    # Send END_OF_STREAM to acknowledge
-                    self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
-                    
-                except Exception as e:
-                    return False
-            elif packet_type == ClientPacketTypes.PING:
-                self.handle_ping(client_socket)
-            elif packet_type == ClientPacketTypes.CANCEL:
-                self.handle_cancel(client_socket)
-            else:
-                return False
-        except Exception as e:
-            return False
-
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
+        # Create connection-specific state
+        connection_state = {
+            'handshake_complete': False,
+            'client_revision': None,
+            'current_user': None,
+            'current_password': None
+        }
+        
         try:
+            print(f"DEBUG: Starting client handler for {address}")
             # Initial handshake
-            if not self.perform_handshake(client_socket):
+            if not self.perform_handshake(client_socket, connection_state):
+                print(f"DEBUG: Handshake failed for {address}")
                 return
+            print(f"DEBUG: Handshake successful for {address}")
             
             # After handshake, expect QUERY, PING, etc.
             while self.running:
                 try:
-                    if not self.handle_protocol_packet(client_socket, address):
+                    print(f"DEBUG: Waiting for packet from {address}")
+                    if not self.handle_protocol_packet(client_socket, address, connection_state):
+                        print(f"DEBUG: Protocol packet handling failed for {address}")
                         break
+                except socket.timeout:
+                    print(f"DEBUG: Socket timeout for {address}")
+                    break
                 except Exception as e:
+                    print(f"DEBUG: Error in client loop for {address}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     break
         except Exception as e:
-            pass
+            print(f"DEBUG: Error in handle_client for {address}: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
+            print(f"DEBUG: Closing connection for {address}")
+            # Remove from active connections
+            with self.connection_lock:
+                if client_socket in self.active_connections:
+                    self.active_connections.remove(client_socket)
             client_socket.close()
     
-    def perform_handshake(self, client_socket: socket.socket) -> bool:
+    def perform_handshake(self, client_socket: socket.socket, connection_state: dict) -> bool:
         """Perform protocol handshake with client"""
         try:
             # Read client hello
@@ -348,11 +358,9 @@ class NativeProtocolServer:
             password = self.read_binary_str(client_socket)
             
             # Store authentication info for session management
-            self.current_user = user
-            self.current_password = password
-            
-            # Store client revision for use in query handling
-            self.client_revision = client_revision
+            connection_state['current_user'] = user
+            connection_state['current_password'] = password
+            connection_state['client_revision'] = client_revision
             
             # Calculate used revision
             used_revision = min(client_revision, DBMS_REVISION)
@@ -384,19 +392,64 @@ class NativeProtocolServer:
             if used_revision >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2:
                 self.write_uint64(0, client_socket)  # No nonce
             
+            # Mark handshake as complete for this connection
+            connection_state['handshake_complete'] = True
+            
             return True
             
         except Exception as e:
+            print(f"DEBUG: Handshake error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
-    def handle_query(self, client_socket: socket.socket, address: tuple):
+    def handle_protocol_packet(self, client_socket: socket.socket, address: tuple, connection_state: dict):
+        """Handle protocol packets more robustly"""
+        try:
+            # Read packet type
+            packet_type = self.read_varint(client_socket)
+            print(f"DEBUG: Received packet type: {packet_type}")
+            
+            if packet_type == ClientPacketTypes.HELLO:
+                print(f"DEBUG: Handling HELLO packet")
+                # Only send HELLO response during initial handshake
+                # After handshake, HELLO packets should be ignored or handled differently
+                if not connection_state['handshake_complete']:
+                    # Send HELLO response
+                    self.write_varint(ServerPacketTypes.HELLO, client_socket)
+                    self.write_binary_str(DBMS_NAME, client_socket)
+                    self.write_varint(DBMS_VERSION_MAJOR, client_socket)
+                    self.write_varint(DBMS_VERSION_MINOR, client_socket)
+                    self.write_varint(DBMS_REVISION, client_socket)
+                    connection_state['handshake_complete'] = True
+                return True
+            elif packet_type == ClientPacketTypes.QUERY:
+                print(f"DEBUG: Handling QUERY packet")
+                return self.handle_query(client_socket, address, connection_state)
+            elif packet_type == ClientPacketTypes.PING:
+                print(f"DEBUG: Handling PING packet")
+                return self.handle_ping(client_socket)
+            elif packet_type == ClientPacketTypes.CANCEL:
+                print(f"DEBUG: Handling CANCEL packet")
+                return self.handle_cancel(client_socket)
+            else:
+                print(f"DEBUG: Unknown packet type: {packet_type}")
+                return False
+                
+        except Exception as e:
+            print(f"DEBUG: Error in handle_protocol_packet: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def handle_query(self, client_socket: socket.socket, address: tuple, connection_state: dict):
         """Handle a QUERY packet from the client"""
         try:
             # Read query ID
             query_id = self.read_binary_str(client_socket)
             
             # Read client info if revision supports it
-            if self.client_revision >= DBMS_MIN_REVISION_WITH_CLIENT_INFO:
+            if connection_state['client_revision'] >= DBMS_MIN_REVISION_WITH_CLIENT_INFO:
                 # Skip client info for now - read the structure properly
                 query_kind = self.read_uint8(client_socket)
                 if query_kind != 0:  # Not empty
@@ -405,7 +458,7 @@ class NativeProtocolServer:
                     initial_address = self.read_binary_str(client_socket)
                     
                     # Read initial query start time if supported
-                    if self.client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME:
+                    if connection_state['client_revision'] >= DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME:
                         initial_query_start_time = self.read_uint64(client_socket)
                     
                     interface = self.read_uint8(client_socket)
@@ -425,7 +478,7 @@ class NativeProtocolServer:
                         distributed_depth = self.read_varint(client_socket)
             
             # Read settings
-            settings_as_strings = self.client_revision >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
+            settings_as_strings = connection_state['client_revision'] >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
             settings = {}
             while True:
                 setting_name = self.read_binary_str(client_socket)
@@ -443,7 +496,7 @@ class NativeProtocolServer:
                 settings[setting_name] = setting_value
             
             # Read inter-server secret if revision supports it
-            if self.client_revision >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
+            if connection_state['client_revision'] >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
                 inter_server_secret = self.read_binary_str(client_socket)
             
             # Read query processing stage
@@ -451,12 +504,25 @@ class NativeProtocolServer:
             
             # Read compression flag
             compression = self.read_varint(client_socket)
+            print(f"DEBUG: Compression flag: {compression}")
             
-            # Read query text
-            query = self.read_binary_str(client_socket)
+            # Read query text based on compression flag
+            print(f"DEBUG: About to read query text")
+            if compression == 0:
+                # No compression
+                query = self.read_binary_str(client_socket)
+            elif compression == 1:
+                # Compressed query
+                query = self.read_compressed_binary_str(client_socket)
+            else:
+                # Unknown compression type, try to read as uncompressed
+                print(f"DEBUG: Unknown compression type {compression}, reading as uncompressed")
+                query = self.read_binary_str(client_socket)
+            print(f"DEBUG: Read query from client: '{query}'")
+            print(f"DEBUG: Query length: {len(query) if query else 0}")
             
             # Read parameters if revision supports it
-            if self.client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
+            if connection_state['client_revision'] >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
                 # Read custom settings (parameters)
                 while True:
                     param_name = self.read_binary_str(client_socket)
@@ -486,7 +552,10 @@ class NativeProtocolServer:
                     if query.strip().upper().startswith('SELECT'):
                         query_for_chdb = f"{query} FORMAT {format_name}"
                 
-                result = execute_query_with_session(query_for_chdb, self.current_user, self.current_password)
+                result = execute_query_with_session(query_for_chdb, format_name, connection_state['current_user'], connection_state['current_password'])
+                
+                # Temporary debug output
+                print(f"DEBUG: Query '{query}' -> result: {result}")
                 
                 # Send DATA packet with results
                 self.write_varint(ServerPacketTypes.DATA, client_socket)
@@ -596,11 +665,19 @@ class NativeProtocolServer:
                 self.write_binary_str(str(e), client_socket)
                 
         except Exception as e:
-            pass
+            print(f"DEBUG: Error in handle_query: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+        return True
     
     def handle_ping(self, client_socket: socket.socket):
         """Handle ping from client"""
+        print(f"DEBUG: Sending PONG response")
         self.write_varint(ServerPacketTypes.PONG, client_socket)
+        print(f"DEBUG: PONG sent successfully")
+        return True
     
     def handle_cancel(self, client_socket: socket.socket):
         """Handle cancel request from client"""
@@ -636,6 +713,7 @@ class NativeProtocolServer:
             if (byte & 0x80) == 0:
                 break
             shift += 7
+        print(f"DEBUG: read_varint: bytes={raw_bytes} value={result}")
         return result
     
     def write_varint(self, value: int, sock: socket.socket):
@@ -656,12 +734,39 @@ class NativeProtocolServer:
     def read_binary_str(self, sock: socket.socket) -> str:
         """Read a binary string"""
         length = self.read_varint(sock)
+        print(f"DEBUG: read_binary_str: length={length}")
         if length == 0:
             return ""
         data = sock.recv(length)
         if len(data) != length:
             raise ConnectionError("Connection closed by peer")
-        return data.decode('utf-8')
+        result = data.decode('utf-8')
+        print(f"DEBUG: read_binary_str: result='{result}'")
+        return result
+    
+    def read_compressed_binary_str(self, sock: socket.socket) -> str:
+        """Read a compressed binary string"""
+        compressed_length = self.read_varint(sock)
+        print(f"DEBUG: read_compressed_binary_str: compressed_length={compressed_length}")
+        if compressed_length == 0:
+            return ""
+        
+        # Read compressed data
+        compressed_data = sock.recv(compressed_length)
+        if len(compressed_data) != compressed_length:
+            raise ConnectionError("Connection closed by peer")
+        
+        # Decompress the data
+        try:
+            decompressed_data = zlib.decompress(compressed_data)
+            result = decompressed_data.decode('utf-8')
+            print(f"DEBUG: read_compressed_binary_str: result='{result}'")
+            return result
+        except Exception as e:
+            print(f"DEBUG: Error decompressing data: {e}")
+            # If decompression fails, try to read as uncompressed
+            print(f"DEBUG: Trying to read as uncompressed string")
+            return compressed_data.decode('utf-8', errors='ignore')
     
     def write_binary_str(self, value: str, sock: socket.socket):
         """Write a binary string in the format expected by clickhouse-driver"""
@@ -779,8 +884,11 @@ def handle_404(e):
 def start_native_server():
     """Start the native protocol server in a separate thread"""
     global native_server
+    print("DEBUG: Starting native server thread...")
     native_server = NativeProtocolServer(host=host, port=native_port)
+    print("DEBUG: Native server created, starting...")
     native_server.start()
+    print("DEBUG: Native server started successfully")
 
 def stop_native_server():
     """Stop the native protocol server"""
