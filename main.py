@@ -79,6 +79,14 @@ DBMS_MIN_REVISION_WITH_VERSION_PATCH = 54401
 DBMS_MIN_PROTOCOL_VERSION_WITH_PASSWORD_COMPLEXITY_RULES = 54461
 DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2 = 54462
 
+# Additional protocol constants that might be missing
+DBMS_MIN_REVISION_WITH_CLIENT_INFO = 54032
+DBMS_MIN_REVISION_WITH_QUOTA_KEY_IN_CLIENT_INFO = 54060
+DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS = 54429
+DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET = 54441
+DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS = 54459
+DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME = 54449
+
 class DataBlock:
     """Represents a data block in ClickHouse native format"""
     def __init__(self, columns: List[Tuple[str, List]], table_name: str = ""):
@@ -379,7 +387,7 @@ class NativeProtocolServer:
             print(f"   Query ID: {query_id}")
             
             # Read client info if supported (for newer protocol versions)
-            if client_revision >= 54032:  # DBMS_MIN_REVISION_WITH_CLIENT_INFO
+            if client_revision >= DBMS_MIN_REVISION_WITH_CLIENT_INFO:
                 # Read client info
                 query_kind = self.read_uint8(client_socket)
                 if query_kind != 0:  # Not empty
@@ -388,7 +396,7 @@ class NativeProtocolServer:
                     initial_address = self.read_binary_str(client_socket)
                     
                     # Read initial query start time if supported
-                    if client_revision >= 54449:  # DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME
+                    if client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME:
                         initial_query_start_time = self.read_uint64(client_socket)
                     
                     interface = self.read_uint8(client_socket)
@@ -400,7 +408,7 @@ class NativeProtocolServer:
                     client_revision = self.read_varint(client_socket)
                     
                     # Read quota key if supported
-                    if client_revision >= 54060:  # DBMS_MIN_REVISION_WITH_QUOTA_KEY_IN_CLIENT_INFO
+                    if client_revision >= DBMS_MIN_REVISION_WITH_QUOTA_KEY_IN_CLIENT_INFO:
                         quota_key = self.read_binary_str(client_socket)
                     
                     # Read distributed depth if supported
@@ -408,7 +416,7 @@ class NativeProtocolServer:
                         distributed_depth = self.read_varint(client_socket)
             
             # Read settings
-            settings_as_strings = client_revision >= 54429  # DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
+            settings_as_strings = client_revision >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
             settings = {}
             while True:
                 setting_name = self.read_binary_str(client_socket)
@@ -426,7 +434,7 @@ class NativeProtocolServer:
                 settings[setting_name] = setting_value
             
             # Read inter-server secret if supported
-            if client_revision >= 54441:  # DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET
+            if client_revision >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
                 inter_server_secret = self.read_binary_str(client_socket)
             
             # Read processing stage and compression
@@ -437,7 +445,7 @@ class NativeProtocolServer:
             query = self.read_binary_str(client_socket)
             
             # Read parameters if supported
-            if client_revision >= 54459:  # DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS
+            if client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
                 # Read custom settings (parameters)
                 while True:
                     param_name = self.read_binary_str(client_socket)
