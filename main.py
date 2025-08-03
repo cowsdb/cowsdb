@@ -372,42 +372,13 @@ class NativeProtocolServer:
                 # Execute query with proper session management
                 result = execute_query_with_session(query, "Native", self.current_user, self.current_password)
                 
-                # Check if result has error
-                try:
-                    has_error = result.has_error()
-                    
-                    # If has_error is True, let's check what the actual error is
-                    if has_error:
-                        try:
-                            error_msg = result.error_message()
-                        except Exception as e:
-                            has_error = False  # Assume success if we can't get error
-                except Exception as e:
-                    # If we can't check has_error, assume success and try to get data
-                    has_error = False
-                
-                if has_error:
-                    # Send exception
-                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                    # Handle error message - it might be binary data
+                # Since execute_query_with_session returns bytes directly, 
+                # we assume success if we get bytes (no error checking needed)
+                if isinstance(result, bytes):
+                    # Success - we have data
                     try:
-                        error_msg = result.error_message()
-                        if isinstance(error_msg, bytes):
-                            # If it's binary data, try to decode it or use a generic message
-                            try:
-                                error_str = error_msg.decode('utf-8')
-                            except UnicodeDecodeError:
-                                error_str = "Query execution failed"
-                        else:
-                            error_str = str(error_msg)
-                        self.write_binary_str(error_str, client_socket)
-                    except Exception as e:
-                        # Fallback to generic error
-                        self.write_binary_str("Query execution failed", client_socket)
-                else:
-                    # Get the Native binary data - this is already in ClickHouse native format!
-                    try:
-                        native_data = result.bytes()
+                        # result is already bytes from execute_query_with_session
+                        native_data = result
                         
                         # Send data packet with proper ClickHouse native protocol structure
                         self.write_varint(ServerPacketTypes.DATA, client_socket)
@@ -422,7 +393,12 @@ class NativeProtocolServer:
                     except Exception as e:
                         # Send exception
                         self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                        self.write_binary_str("Failed to get query data", client_socket)
+                        self.write_binary_str(f"Failed to get query data: {str(e)}", client_socket)
+                else:
+                    # This shouldn't happen, but handle it gracefully
+                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
+                    self.write_binary_str("Unexpected result type", client_socket)
+                    return
                 
             except Exception as e:
                 # Send exception
