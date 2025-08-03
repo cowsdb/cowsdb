@@ -28,6 +28,10 @@ native_port = 9000
 base_path = "/tmp/cowsdb"
 native_server = None
 
+# Global session manager - maintains one session per auth pair
+session_manager = {}
+session_lock = threading.Lock()
+
 # Flask app setup
 app = Flask(__name__, static_folder="public", static_url_path="")
 auth = HTTPBasicAuth()
@@ -122,28 +126,48 @@ class DataBlock:
 
 def get_user_session_path(username: str = None, password: str = None) -> str:
     """Get the session path for a user based on authentication"""
-    if not (username and password):
-        # Anonymous user gets a default path
-        return os.path.join(base_path, "anonymous")
-    else:
-        # Authenticated users get a path based on their credentials hash
-        user_hash = str(hash(username + password))
-        return os.path.join(base_path, user_hash)
+    # Default to "default:" when unset
+    if not username:
+        username = "default"
+    if not password:
+        password = "default"
+    
+    # All users get a path based on their credentials hash
+    user_hash = str(hash(username + ":" + password))
+    return os.path.join(base_path, user_hash)
+
+def get_or_create_session(username: str = None, password: str = None):
+    """Get or create a persistent session for the user"""
+    # Default to "default:" when unset
+    if not username:
+        username = "default"
+    if not password:
+        password = "default"
+    
+    auth_key = f"{username}:{password}"
+    
+    with session_lock:
+        if auth_key not in session_manager:
+            # Create new session
+            session_path = get_user_session_path(username, password)
+            os.makedirs(session_path, exist_ok=True)
+            session = chs.Session(path=session_path)
+            session_manager[auth_key] = session
+            print(f"🔧 Created new persistent session for {auth_key} at {session_path}")
+        else:
+            print(f"🔧 Using existing persistent session for {auth_key}")
+        
+        return session_manager[auth_key]
 
 def execute_query_with_session(query: str, format: str = "TSV", username: str = None, password: str = None):
-    """Execute a query using a fresh session for the user"""
-    session_path = get_user_session_path(username, password)
-    
-    # Ensure the directory exists
-    os.makedirs(session_path, exist_ok=True)
-    
-    # Create a new session for this query
-    session = chs.Session(path=session_path)
-    
+    """Execute a query using a persistent session for the user"""
     try:
-        # Execute the query and get bytes directly (like original)
+        # Get or create persistent session
+        session = get_or_create_session(username, password)
+        
+        # Execute the query
         print(f"🔍 Executing query: {query}")
-        print(f"   Session path: {session_path}")
+        print(f"   User: {username or 'default'}")
         
         result = session.query(query, format)
         
@@ -170,11 +194,7 @@ def execute_query_with_session(query: str, format: str = "TSV", username: str = 
         print(f"   Query: {query}")
         print(f"   Format: {format}")
         print(f"   User: {username}")
-        print(f"   Session path: {session_path}")
         return b""  # Return empty bytes for errors
-    finally:
-        # Always close the session
-        session.close()
 
 class NativeProtocolServer:
     def __init__(self, host='0.0.0.0', port=9000):
@@ -185,7 +205,6 @@ class NativeProtocolServer:
         self.client_revision = None  # Store client revision from handshake
         self.current_user = None
         self.current_password = None
-        self.client_sessions = {}  # Store sessions per client connection
         
     def start(self):
         """Start the native protocol server"""
@@ -223,18 +242,11 @@ class NativeProtocolServer:
     
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
-        client_session = None
         try:
             if not self.perform_handshake(client_socket):
                 return
             
-            # Create a session for this client
-            session_path = get_user_session_path(self.current_user, self.current_password)
-            os.makedirs(session_path, exist_ok=True)
-            client_session = chs.Session(path=session_path)
-            self.client_sessions[address] = client_session
-            
-            print(f"Created session for client {address} at {session_path}")
+            print(f"Native client {address} authenticated as {self.current_user}:{self.current_password}")
             
             while self.running:
                 try:
@@ -261,14 +273,6 @@ class NativeProtocolServer:
         except Exception as e:
             print(f"Error with native client {address}: {e}")
         finally:
-            # Clean up session
-            if client_session:
-                try:
-                    client_session.close()
-                    del self.client_sessions[address]
-                    print(f"Closed session for client {address}")
-                except:
-                    pass
             client_socket.close()
             print(f"Native connection closed for {address}")
     
@@ -413,21 +417,15 @@ class NativeProtocolServer:
                     flags = self.read_uint8(client_socket)
                     param_value = self.read_binary_str(client_socket)
             
-            # Execute query using the client's session
+            # Execute query using the global session manager
             try:
                 print(f"🔍 Executing native query: {query}")
                 
-                # Get the client's session
-                if address not in self.client_sessions:
-                    print(f"❌ No session found for client {address}")
-                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                    self.write_binary_str("No session found", client_socket)
-                    return
+                # Get or create persistent session for this client's auth
+                session = get_or_create_session(self.current_user, self.current_password)
                 
-                client_session = self.client_sessions[address]
-                
-                # Execute query using the client's session
-                result = client_session.query(query, "Native").bytes()
+                # Execute query using the persistent session
+                result = session.query(query, "Native").bytes()
                 
                 # Since execute_query_with_session returns bytes directly, 
                 # we assume success if we get bytes (no error checking needed)
@@ -657,10 +655,23 @@ def stop_native_server():
     if native_server:
         native_server.stop()
 
+def cleanup_sessions():
+    """Clean up all persistent sessions"""
+    global session_manager
+    with session_lock:
+        for auth_key, session in session_manager.items():
+            try:
+                session.close()
+                print(f"🔧 Closed session for {auth_key}")
+            except Exception as e:
+                print(f"⚠️  Error closing session for {auth_key}: {e}")
+        session_manager.clear()
+
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     print(f"\nShutting down servers...")
     stop_native_server()
+    cleanup_sessions()
     print("Exiting...")
     sys.exit(0)
 
