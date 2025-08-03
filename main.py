@@ -243,46 +243,61 @@ class NativeProtocolServer:
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
         try:
+            print(f"🔍 New native client connection from {address}")
+            
             if not self.perform_handshake(client_socket):
+                print(f"❌ Handshake failed for client {address}")
                 return
             
-            print(f"Native client {address} authenticated as {self.current_user}:{self.current_password}")
+            print(f"✅ Native client {address} authenticated as {self.current_user}:{self.current_password}")
             
             while self.running:
                 try:
+                    print(f"   Waiting for packet from {address}...")
                     packet_type = self.read_varint(client_socket)
+                    print(f"   Received packet type: {packet_type} from {address}")
                     
                     if packet_type == ClientPacketTypes.QUERY:
                         self.handle_query(client_socket, address)
                     elif packet_type == ClientPacketTypes.PING:
+                        print(f"   Handling PING from {address}")
                         self.handle_ping(client_socket)
                     elif packet_type == ClientPacketTypes.CANCEL:
+                        print(f"   Handling CANCEL from {address}")
                         self.handle_cancel(client_socket)
                     elif packet_type == ClientPacketTypes.HELLO:
+                        print(f"   Handling subsequent HELLO from {address}")
                         # Handle subsequent HELLO packets (re-authentication)
                         if not self.perform_handshake(client_socket):
                             break
                     else:
-                        print(f"Unsupported packet type: {packet_type}")
+                        print(f"❌ Unsupported packet type: {packet_type} from {address}")
                         break
                         
                 except Exception as e:
-                    print(f"Error handling native client {address}: {e}")
+                    print(f"❌ Error handling native client {address}: {e}")
+                    import traceback
+                    traceback.print_exc()
                     break
                     
         except Exception as e:
-            print(f"Error with native client {address}: {e}")
+            print(f"❌ Error with native client {address}: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             client_socket.close()
-            print(f"Native connection closed for {address}")
+            print(f"🔌 Native connection closed for {address}")
     
     def perform_handshake(self, client_socket: socket.socket) -> bool:
         """Perform protocol handshake with client"""
         try:
+            print(f"🔍 Starting native handshake...")
+            
             # Read client hello
             packet_type = self.read_varint(client_socket)
+            print(f"   Received packet type: {packet_type}")
             if packet_type != ClientPacketTypes.HELLO:
-                print(f"Expected HELLO packet, got {packet_type}")
+                print(f"❌ Expected HELLO packet, got {packet_type}")
                 return False
             
             # Read client info
@@ -294,6 +309,9 @@ class NativeProtocolServer:
             user = self.read_binary_str(client_socket)
             password = self.read_binary_str(client_socket)
             
+            print(f"   Client info: {client_name} v{client_version_major}.{client_version_minor} (rev {client_revision})")
+            print(f"   Database: {database}, User: {user}, Password: '{password}'")
+            
             # Store authentication info for session management
             self.current_user = user
             self.current_password = password
@@ -301,12 +319,11 @@ class NativeProtocolServer:
             # Store client revision for use in query handling
             self.client_revision = client_revision
             
-            print(f"Native client: {client_name} v{client_version_major}.{client_version_minor} (rev {client_revision})")
-            print(f"User: {user}, Database: {database}, Password: '{password}'")
-            
             # Calculate used revision
             used_revision = min(client_revision, DBMS_REVISION)
+            print(f"   Using revision: {used_revision}")
             
+            print(f"   Sending server hello...")
             # Send server hello
             self.write_varint(ServerPacketTypes.HELLO, client_socket)
             self.write_binary_str(DBMS_NAME, client_socket)
@@ -316,38 +333,50 @@ class NativeProtocolServer:
             
             # Send timezone if supported
             if used_revision >= DBMS_MIN_REVISION_WITH_SERVER_TIMEZONE:
+                print(f"   Sending timezone...")
                 self.write_binary_str("UTC", client_socket)
             
             # Send display name if supported
             if used_revision >= DBMS_MIN_REVISION_WITH_SERVER_DISPLAY_NAME:
+                print(f"   Sending display name...")
                 self.write_binary_str(DBMS_NAME, client_socket)
             
             # Send version patch if supported
             if used_revision >= DBMS_MIN_REVISION_WITH_VERSION_PATCH:
+                print(f"   Sending version patch...")
                 self.write_varint(DBMS_VERSION_PATCH, client_socket)
             
             # Send password complexity rules if supported
             if used_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_PASSWORD_COMPLEXITY_RULES:
+                print(f"   Sending password complexity rules...")
                 self.write_varint(0, client_socket)  # No rules
             
             # Send inter-server secret if supported
             if used_revision >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET_V2:
+                print(f"   Sending inter-server secret...")
                 self.write_uint64(0, client_socket)  # No nonce
             
+            print(f"✅ Native handshake completed successfully")
             return True
             
         except Exception as e:
-            print(f"Native handshake failed: {e}")
+            print(f"❌ Native handshake failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def handle_query(self, client_socket: socket.socket, address: tuple):
         """Handle a query from the client"""
         try:
+            print(f"🔍 Starting query handling...")
+            
             # Use the actual client revision from handshake
             client_revision = self.client_revision or 54468
+            print(f"   Using client revision: {client_revision}")
             
             # Read query info
             query_id = self.read_binary_str(client_socket)
+            print(f"   Query ID: {query_id}")
             
             # Read client info if supported (for newer protocol versions)
             if client_revision >= 54032:  # DBMS_MIN_REVISION_WITH_CLIENT_INFO
@@ -420,18 +449,23 @@ class NativeProtocolServer:
             # Execute query using the global session manager
             try:
                 print(f"🔍 Executing native query: {query}")
+                print(f"   User: {self.current_user}, Password: {self.current_password}")
                 
                 # Get or create persistent session for this client's auth
                 session = get_or_create_session(self.current_user, self.current_password)
+                print(f"   Got session for query execution")
                 
                 # Execute query using the persistent session
+                print(f"   Executing query with chdb...")
                 result = session.query(query, "Native").bytes()
+                print(f"   Query executed, got {len(result)} bytes")
                 
                 # Since execute_query_with_session returns bytes directly, 
                 # we assume success if we get bytes (no error checking needed)
                 if isinstance(result, bytes):
                     # Success - we have data
                     try:
+                        print(f"   Sending DATA packet...")
                         # result is already bytes from execute_query_with_session
                         native_data = result
                         
@@ -442,14 +476,19 @@ class NativeProtocolServer:
                         
                         # Send the native binary data as the block content
                         client_socket.send(native_data)
+                        print(f"   Sent {len(native_data)} bytes of data")
                         
                         # Send end of stream
+                        print(f"   Sending END_OF_STREAM...")
                         self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
+                        print(f"   Query response completed successfully")
                     except Exception as e:
+                        print(f"❌ Error sending data: {e}")
                         # Send exception
                         self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                         self.write_binary_str(f"Failed to get query data: {str(e)}", client_socket)
                 else:
+                    print(f"❌ Unexpected result type: {type(result)}")
                     # This shouldn't happen, but handle it gracefully
                     self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                     self.write_binary_str("Unexpected result type", client_socket)
@@ -459,6 +498,8 @@ class NativeProtocolServer:
                 # Log the error
                 print(f"❌ Native query execution failed: {e}")
                 print(f"   Query: {query}")
+                import traceback
+                traceback.print_exc()
                 # Send exception
                 self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                 # Send error as string, not binary
@@ -466,13 +507,15 @@ class NativeProtocolServer:
                 self.write_binary_str(error_str, client_socket)
             
         except Exception as e:
-            print(f"Error handling native query: {e}")
+            print(f"❌ Error handling native query: {e}")
+            import traceback
+            traceback.print_exc()
             # Send exception
             try:
                 self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                 self.write_binary_str(str(e), client_socket)
-            except:
-                pass
+            except Exception as send_error:
+                print(f"❌ Failed to send error response: {send_error}")
     
     def handle_ping(self, client_socket: socket.socket):
         """Handle ping from client"""
