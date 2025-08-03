@@ -426,6 +426,9 @@ class NativeProtocolServer:
             elif packet_type == ClientPacketTypes.QUERY:
                 print(f"DEBUG: Handling QUERY packet")
                 return self.handle_query(client_socket, address, connection_state)
+            elif packet_type == ClientPacketTypes.DATA:
+                print(f"DEBUG: Handling DATA packet")
+                return self.handle_data(client_socket, address, connection_state)
             elif packet_type == ClientPacketTypes.PING:
                 print(f"DEBUG: Handling PING packet")
                 return self.handle_ping(client_socket)
@@ -515,8 +518,12 @@ class NativeProtocolServer:
                 # Compressed query
                 query = self.read_compressed_binary_str(client_socket)
             else:
-                # Unknown compression type, try to read as uncompressed
-                print(f"DEBUG: Unknown compression type {compression}, reading as uncompressed")
+                # Unknown compression type (compression == 2)
+                # The client seems to send an empty compressed string first, then the actual query
+                print(f"DEBUG: Unknown compression type {compression}, reading empty compressed string first")
+                empty_compressed = self.read_compressed_binary_str(client_socket)
+                print(f"DEBUG: Empty compressed string: '{empty_compressed}'")
+                # Now read the actual query as a regular binary string
                 query = self.read_binary_str(client_socket)
             print(f"DEBUG: Read query from client: '{query}'")
             print(f"DEBUG: Query length: {len(query) if query else 0}")
@@ -597,14 +604,6 @@ class NativeProtocolServer:
                         
                         columns.append((col_name, col_type, col_data))
                     
-                    # Send BlockInfo first (if revision supports it) - required for revision >= 51903
-                    # BlockInfo structure: field_num=1, is_overflows=0, field_num=2, bucket_num=-1, field_num=0
-                    self.write_varint(1, client_socket)  # field_num=1
-                    client_socket.send(b"\x00")  # is_overflows=0 (uint8)
-                    self.write_varint(2, client_socket)  # field_num=2
-                    client_socket.send(struct.pack('<i', -1))  # bucket_num=-1 (int32)
-                    self.write_varint(0, client_socket)  # field_num=0 (end marker)
-                    
                     # Send block data in the format expected by clickhouse-driver
                     self.write_varint(n_columns, client_socket)  # n_columns
                     self.write_varint(n_rows, client_socket)  # n_rows
@@ -645,13 +644,6 @@ class NativeProtocolServer:
                             client_socket.send(col_data)
                 else:
                     # For non-SELECT queries (DDL, DML), send empty block
-                    # Send BlockInfo first (if revision supports it) - required for revision >= 51903
-                    self.write_varint(1, client_socket)  # field_num=1
-                    client_socket.send(b"\x00")  # is_overflows=0 (uint8)
-                    self.write_varint(2, client_socket)  # field_num=2
-                    client_socket.send(struct.pack('<i', -1))  # bucket_num=-1 (int32)
-                    self.write_varint(0, client_socket)  # field_num=0 (end marker)
-                    
                     # Send empty block data
                     self.write_varint(0, client_socket)  # 0 columns
                     self.write_varint(0, client_socket)  # 0 rows
@@ -671,6 +663,41 @@ class NativeProtocolServer:
             return False
         
         return True
+    
+    def handle_data(self, client_socket: socket.socket, address: tuple, connection_state: dict):
+        """Handle a DATA packet from the client"""
+        try:
+            # Read table name
+            table_name = self.read_binary_str(client_socket)
+            print(f"DEBUG: DATA packet for table: {table_name}")
+            
+            # Read block info (simplified - just skip it for now)
+            # For now, just read and discard the data
+            try:
+                # Read number of columns
+                n_columns = self.read_varint(client_socket)
+                print(f"DEBUG: DATA packet columns: {n_columns}")
+                
+                # Read number of rows
+                n_rows = self.read_varint(client_socket)
+                print(f"DEBUG: DATA packet rows: {n_rows}")
+                
+                # For now, just skip the actual data
+                # In a real implementation, we would parse and process this data
+                print(f"DEBUG: Skipping {n_rows} rows of data")
+                
+            except Exception as e:
+                print(f"DEBUG: Error reading DATA packet structure: {e}")
+            
+            # Send END_OF_STREAM to acknowledge
+            self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
+            return True
+            
+        except Exception as e:
+            print(f"DEBUG: Error in handle_data: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def handle_ping(self, client_socket: socket.socket):
         """Handle ping from client"""
