@@ -1,4 +1,4 @@
-<img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=140><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=100><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=70><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=40>
+<img width="200" height="200" alt="image" src="https://github.com/user-attachments/assets/a21ea293-36f0-4ff2-9898-c5f68883c22f" /><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=140><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=100><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=70><img src="https://github.com/user-attachments/assets/685cc433-a5bb-45a4-bbd2-4f132f6dec44" width=40>
 
 # CowsDB
 [![CowsDB SQL Bench](https://github.com/cowsdb/cowsdb/actions/workflows/test.yml/badge.svg)](https://github.com/cowsdb/cowsdb/actions/workflows/test.yml)
