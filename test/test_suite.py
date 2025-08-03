@@ -317,6 +317,53 @@ class CowsDBTestSuite:
         for query, description in ddl_queries:
             self.test_native_query(query, description)
     
+    def test_native_multiple_rows(self):
+        """Test native protocol with multiple rows"""
+        multiple_row_queries = [
+            ("SELECT * FROM numbers(3)", "Multiple rows (3)"),
+            ("SELECT * FROM numbers(5)", "Multiple rows (5)"),
+            ("SELECT * FROM numbers(10)", "Multiple rows (10)"),
+        ]
+        
+        for query, description in multiple_row_queries:
+            self.test_native_query(query, description)
+    
+    def test_native_complex_queries(self):
+        """Test native protocol with complex queries (multiple columns + multiple rows)"""
+        complex_queries = [
+            ("SELECT number, toString(number) FROM numbers(3)", "Multiple columns and rows (3)"),
+            ("SELECT number, toString(number), number * 2 FROM numbers(4)", "Multiple columns and rows (4)"),
+            ("SELECT number, toString(number), number * 2, number % 2 FROM numbers(5)", "Multiple columns and rows (5)"),
+        ]
+        
+        for query, description in complex_queries:
+            self.test_native_query(query, description)
+    
+    def test_native_mixed_data_types(self):
+        """Test native protocol with mixed data types"""
+        mixed_type_queries = [
+            ("SELECT 1, 'hello', 3.14", "Mixed types (Int, String, Float)"),
+            ("SELECT 1, 'hello', 3.14, now()", "Mixed types (Int, String, Float, DateTime)"),
+            ("SELECT number, toString(number), number * 1.5 FROM numbers(3)", "Mixed types with numbers"),
+        ]
+        
+        for query, description in mixed_type_queries:
+            self.test_native_query(query, description)
+    
+    def test_native_edge_cases(self):
+        """Test native protocol with edge cases"""
+        edge_case_queries = [
+            ("SELECT ''", "Empty string"),
+            ("SELECT 'hello world'", "String with spaces"),
+            ("SELECT 0", "Zero value"),
+            ("SELECT 255", "Max UInt8"),
+            ("SELECT 65535", "Max UInt16"),
+            ("SELECT 4294967295", "Max UInt32"),
+        ]
+        
+        for query, description in edge_case_queries:
+            self.test_native_query(query, description)
+    
     def test_session_management(self):
         """Test session management and authentication"""
         try:
@@ -341,6 +388,36 @@ class CowsDBTestSuite:
                     
         except Exception as e:
             self.log_test("Session Management", False, str(e))
+    
+    def test_clickhouse_driver_integration(self):
+        """Test integration with clickhouse-driver Python client"""
+        try:
+            from clickhouse_driver import Client
+            
+            # Create client
+            client = Client('localhost', user='default', password='default')
+            
+            # Test basic functionality
+            test_queries = [
+                ("SELECT 1", "Basic query"),
+                ("SELECT 1, version()", "Multiple columns"),
+                ("SELECT * FROM numbers(3)", "Multiple rows"),
+                ("SELECT number, toString(number) FROM numbers(3)", "Multiple columns and rows"),
+            ]
+            
+            for query, description in test_queries:
+                try:
+                    result = client.execute(query)
+                    self.log_test(f"clickhouse-driver {description}", True, f"Result: {result}")
+                except Exception as e:
+                    self.log_test(f"clickhouse-driver {description}", False, str(e))
+            
+            client.disconnect()
+            
+        except ImportError:
+            self.log_test("clickhouse-driver integration", False, "clickhouse-driver not installed")
+        except Exception as e:
+            self.log_test("clickhouse-driver integration", False, str(e))
     
     def run_all_tests(self):
         """Run all tests"""
@@ -367,6 +444,15 @@ class CowsDBTestSuite:
             self.test_native_handshake()
             self.test_native_data_types()
             self.test_native_ddl_queries()
+            self.test_native_multiple_rows()
+            self.test_native_complex_queries()
+            self.test_native_mixed_data_types()
+            self.test_native_edge_cases()
+            
+            # clickhouse-driver integration test
+            print("\n🔍 Testing clickhouse-driver Integration...")
+            print("-" * 30)
+            self.test_clickhouse_driver_integration()
             
             # Summary
             print("\n📊 Test Results Summary")

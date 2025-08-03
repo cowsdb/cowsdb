@@ -252,62 +252,112 @@ class NativeProtocolServer:
             self.server_socket.close()
         print("Native protocol server stopped")
     
+    def handle_protocol_packet(self, client_socket: socket.socket, address: tuple):
+        """Handle protocol packets more robustly"""
+        try:
+            # Read packet type
+            packet_type = self.read_varint(client_socket)
+            print(f"   [DEBUG] Packet type raw: {packet_type}")
+            print(f"   Received packet type: {packet_type} from {address}")
+            
+            # After handshake, the client sends QUERY (1), not HELLO (0)
+            # If we get packet type 0, it means we're reading from the wrong position
+            # The client sends: HELLO (0) -> QUERY (1) in sequence
+            if packet_type == 0:
+                print(f"   🤔 Got packet type 0 after handshake, this is wrong.")
+                print(f"   🔄 The client should be sending QUERY (1) now.")
+                print(f"   🔄 This suggests we're reading from the wrong position in the stream.")
+                
+                # Try to read the next byte to see what's actually there
+                try:
+                    next_byte = client_socket.recv(1)
+                    if next_byte:
+                        print(f"   [DEBUG] Next byte: {next_byte[0]} (0x{next_byte[0]:02x})")
+                        if next_byte[0] == 1:
+                            print(f"   🎯 Found QUERY packet! The issue is we're reading packet type from wrong position.")
+                            # Handle as QUERY
+                            self.handle_query(client_socket, address)
+                            return True
+                        else:
+                            print(f"   ❌ Next byte is not QUERY (1), it's {next_byte[0]}")
+                            return False
+                except Exception as e:
+                    print(f"   ❌ Error reading next byte: {e}")
+                    return False
+                
+                return False
+
+            if packet_type == ClientPacketTypes.QUERY:
+                print(f"   📝 Received QUERY packet from {address}")
+                self.handle_query(client_socket, address)
+            elif packet_type == ClientPacketTypes.DATA:
+                print(f"   📊 Received DATA packet from {address}")
+                # Handle data packet (for INSERT operations)
+                # For now, just read and discard the data
+                try:
+                    # Read table name
+                    table_name = self.read_binary_str(client_socket)
+                    print(f"   📋 Table name: {table_name}")
+                    
+                    # Read block info
+                    block_info = self.read_uint8(client_socket)
+                    print(f"   📊 Block info: {block_info}")
+                    
+                    # Read number of columns
+                    n_columns = self.read_varint(client_socket)
+                    print(f"   📊 Number of columns: {n_columns}")
+                    
+                    # Read number of rows
+                    n_rows = self.read_varint(client_socket)
+                    print(f"   📊 Number of rows: {n_rows}")
+                    
+                    # For now, just skip the data
+                    print(f"   ⏭️ Skipping {n_rows} rows of data")
+                    
+                    # Send END_OF_STREAM to acknowledge
+                    self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
+                    print(f"   📤 Sent END_OF_STREAM for DATA packet")
+                    
+                except Exception as e:
+                    print(f"   ❌ Error handling DATA packet: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
+            elif packet_type == ClientPacketTypes.PING:
+                print(f"   Handling PING from {address}")
+                self.handle_ping(client_socket)
+            elif packet_type == ClientPacketTypes.CANCEL:
+                print(f"   Handling CANCEL from {address}")
+                self.handle_cancel(client_socket)
+            else:
+                print(f"❌ Unsupported packet type: {packet_type} from {address}")
+                return False
+        except Exception as e:
+            print(f"❌ Error handling protocol packet: {e}")
+            return False
+
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
         try:
             print(f"🔍 New native client connection from {address}")
             
+            # Initial handshake
             if not self.perform_handshake(client_socket):
                 print(f"❌ Handshake failed for client {address}")
                 return
-            
             print(f"✅ Native client {address} authenticated as {self.current_user}:{self.current_password}")
             
+            # After handshake, expect QUERY, PING, etc.
             while self.running:
                 try:
                     print(f"   Waiting for packet from {address}...")
-                    try:
-                        packet_type = self.read_varint(client_socket)
-                        print(f"   Received packet type: {packet_type} from {address}")
-                    except Exception as read_error:
-                        print(f"❌ Failed to read packet type from {address}: {read_error}")
+                    if not self.handle_protocol_packet(client_socket, address):
                         break
-                    
-                    if packet_type == ClientPacketTypes.QUERY:
-                        self.handle_query(client_socket, address)
-                    elif packet_type == ClientPacketTypes.PING:
-                        print(f"   Handling PING from {address}")
-                        self.handle_ping(client_socket)
-                    elif packet_type == ClientPacketTypes.CANCEL:
-                        print(f"   Handling CANCEL from {address}")
-                        self.handle_cancel(client_socket)
-                    elif packet_type == ClientPacketTypes.HELLO:
-                        print(f"   Handling subsequent HELLO from {address}")
-                        # Handle subsequent HELLO packets (re-authentication)
-                        if not self.perform_handshake(client_socket):
-                            break
-                    elif packet_type == ClientPacketTypes.CLIENT_INFO:
-                        print(f"   Handling CLIENT_INFO from {address}")
-                        # Skip client info packet for now
-                        pass
-                    elif packet_type == ClientPacketTypes.SETTINGS:
-                        print(f"   Handling SETTINGS from {address}")
-                        # Skip settings packet for now
-                        pass
-                    elif packet_type == ClientPacketTypes.EXTENSION:
-                        print(f"   Handling EXTENSION from {address}")
-                        # Skip extension packet for now
-                        pass
-                    else:
-                        print(f"❌ Unsupported packet type: {packet_type} from {address}")
-                        break
-                        
                 except Exception as e:
                     print(f"❌ Error handling native client {address}: {e}")
                     import traceback
                     traceback.print_exc()
                     break
-                    
         except Exception as e:
             print(f"❌ Error with native client {address}: {e}")
             import traceback
@@ -385,6 +435,7 @@ class NativeProtocolServer:
                 self.write_uint64(0, client_socket)  # No nonce
             
             print(f"✅ Native handshake completed successfully")
+            
             return True
             
         except Exception as e:
@@ -394,21 +445,16 @@ class NativeProtocolServer:
             return False
     
     def handle_query(self, client_socket: socket.socket, address: tuple):
-        """Handle a query from the client"""
+        """Handle a QUERY packet from the client"""
         try:
-            print(f"🔍 Starting query handling...")
-            
-            # Use the actual client revision from handshake
-            client_revision = self.client_revision or 54468
-            print(f"   Using client revision: {client_revision}")
-            
-            # Read query info
+            # Read query ID
             query_id = self.read_binary_str(client_socket)
-            print(f"   Query ID: {query_id}")
+            print(f"   📝 Query ID: {query_id}")
             
-            # Read client info if supported (for newer protocol versions)
-            if client_revision >= DBMS_MIN_REVISION_WITH_CLIENT_INFO:
-                # Read client info
+            # Read client info if revision supports it
+            if self.client_revision >= DBMS_MIN_REVISION_WITH_CLIENT_INFO:
+                print(f"   📋 Reading client info...")
+                # Skip client info for now - read the structure properly
                 query_kind = self.read_uint8(client_socket)
                 if query_kind != 0:  # Not empty
                     initial_user = self.read_binary_str(client_socket)
@@ -416,7 +462,7 @@ class NativeProtocolServer:
                     initial_address = self.read_binary_str(client_socket)
                     
                     # Read initial query start time if supported
-                    if client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME:
+                    if self.client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_INITIAL_QUERY_START_TIME:
                         initial_query_start_time = self.read_uint64(client_socket)
                     
                     interface = self.read_uint8(client_socket)
@@ -436,7 +482,8 @@ class NativeProtocolServer:
                         distributed_depth = self.read_varint(client_socket)
             
             # Read settings
-            settings_as_strings = client_revision >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
+            print(f"   ⚙️ Reading settings...")
+            settings_as_strings = self.client_revision >= DBMS_MIN_REVISION_WITH_SETTINGS_SERIALIZED_AS_STRINGS
             settings = {}
             while True:
                 setting_name = self.read_binary_str(client_socket)
@@ -452,21 +499,27 @@ class NativeProtocolServer:
                     continue
                 
                 settings[setting_name] = setting_value
+                print(f"   ⚙️ Setting: {setting_name} = {setting_value}")
             
-            # Read inter-server secret if supported
-            if client_revision >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
+            # Read inter-server secret if revision supports it
+            if self.client_revision >= DBMS_MIN_REVISION_WITH_INTERSERVER_SECRET:
                 inter_server_secret = self.read_binary_str(client_socket)
+                print(f"   🔐 Inter-server secret: {inter_server_secret}")
             
-            # Read processing stage and compression
-            processing_stage = self.read_varint(client_socket)
+            # Read query processing stage
+            query_stage = self.read_varint(client_socket)
+            print(f"   📊 Query stage: {query_stage}")
+            
+            # Read compression flag
             compression = self.read_varint(client_socket)
+            print(f"   🗜️ Compression: {compression}")
             
-            # Read the actual query
+            # Read query text
             query = self.read_binary_str(client_socket)
             print(f"   📝 Raw query content: '{query}'")
             
-            # Read parameters if supported
-            if client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
+            # Read parameters if revision supports it
+            if self.client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
                 # Read custom settings (parameters)
                 while True:
                     param_name = self.read_binary_str(client_socket)
@@ -474,155 +527,166 @@ class NativeProtocolServer:
                         break
                     flags = self.read_uint8(client_socket)
                     param_value = self.read_binary_str(client_socket)
+                    print(f"   📋 Parameter: {param_name} = {param_value}")
             
-            # Execute query using the global session manager
+            # Execute the query
+            print(f"   🚀 Executing query...")
             try:
-                print(f"🔍 Executing native query: {query}")
-                print(f"   User: {self.current_user}, Password: {self.current_password}")
+                # Extract FORMAT from query if present, otherwise use NATIVE
+                format_name = "NATIVE"  # Default format for native protocol
+                query_for_chdb = query
                 
-                # Special handling for command line suggestions
-                if "suggestions" in query.lower() or "system.suggestions" in query.lower():
-                    print(f"   🎯 Detected command line suggestions query!")
-                    print(f"   This is likely the query causing the connection reset")
-                
-                # Get or create persistent session for this client's auth
-                session = get_or_create_session(self.current_user, self.current_password)
-                print(f"   Got session for query execution")
-                
-                # Execute query using the persistent session
-                print(f"   Executing query with chdb...")
-                try:
-                    # Try TSV format first, then we'll convert to native protocol format
-                    result = session.query(query, "TSV").bytes()
-                    print(f"   Query executed successfully, got {len(result)} bytes")
-                except Exception as chdb_error:
-                    print(f"❌ chdb query execution failed: {chdb_error}")
-                    print(f"   Query: {query}")
-                    import traceback
-                    traceback.print_exc()
-                    # Send exception to client
-                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                    self.write_binary_str(f"Query execution failed: {str(chdb_error)}", client_socket)
-                    return
-                
-                # Since execute_query_with_session returns bytes directly, 
-                # we assume success if we get bytes (no error checking needed)
-                if isinstance(result, bytes):
-                    # Success - we have data
-                    try:
-                        print(f"   Sending DATA packet...")
-                        
-                        # Send data packet with proper ClickHouse native protocol structure
-                        print(f"   Sending packet type: {ServerPacketTypes.DATA}")
-                        self.write_varint(ServerPacketTypes.DATA, client_socket)
-                        self.write_binary_str("", client_socket)  # table name
-                        self.write_varint(0, client_socket)  # block info
-                        
-                        # Convert TSV result to proper native protocol format
-                        # For now, let's send a simple empty block for testing
-                        print(f"   Converting TSV result to native format...")
-                        
-                        # Create a simple data block: 1 column, 1 row with the result
-                        tsv_data = result.decode('utf-8').strip()
-                        if tsv_data:
-                            # Parse TSV data and create proper native block
-                            lines = tsv_data.split('\n')
-                            if lines and lines[0]:
-                                # Simple approach: create a block with one column and one row
-                                block_data = struct.pack('<II', 1, 1)  # 1 column, 1 row
-                                
-                                # Column name
-                                col_name = "result"
-                                col_name_bytes = col_name.encode('utf-8')
-                                block_data += struct.pack('<I', len(col_name_bytes))
-                                block_data += col_name_bytes
-                                
-                                # Column type
-                                col_type = "String"
-                                col_type_bytes = col_type.encode('utf-8')
-                                block_data += struct.pack('<I', len(col_type_bytes))
-                                block_data += col_type_bytes
-                                
-                                # Data value
-                                value_bytes = lines[0].encode('utf-8')
-                                block_data += struct.pack('<I', len(value_bytes))
-                                block_data += value_bytes
-                                
-                                client_socket.send(block_data)
-                                print(f"   Sent {len(block_data)} bytes of native data")
-                            else:
-                                # Empty result
-                                empty_block = struct.pack('<II', 0, 0)  # 0 columns, 0 rows
-                                client_socket.send(empty_block)
-                                print(f"   Sent empty data block")
-                        else:
-                            # Empty result
-                            empty_block = struct.pack('<II', 0, 0)  # 0 columns, 0 rows
-                            client_socket.send(empty_block)
-                            print(f"   Sent empty data block")
-                        
-                        # Send end of stream
-                        print(f"   Sending END_OF_STREAM...")
-                        self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
-                        print(f"   Query response completed successfully")
-                    except Exception as e:
-                        print(f"❌ Error sending data: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        # Send exception
-                        self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                        self.write_binary_str(f"Failed to get query data: {str(e)}", client_socket)
-                elif result is None or len(result) == 0:
-                    # Empty result - still send proper response structure
-                    print(f"   Query returned empty result, sending empty data block")
-                    try:
-                        # Send empty data packet
-                        print(f"   Sending packet type: {ServerPacketTypes.DATA} (empty)")
-                        self.write_varint(ServerPacketTypes.DATA, client_socket)
-                        self.write_binary_str("", client_socket)  # table name
-                        self.write_varint(0, client_socket)  # block info
-                        
-                        # Send empty block (0 columns, 0 rows)
-                        empty_block = struct.pack('<II', 0, 0)  # 0 columns, 0 rows
-                        client_socket.send(empty_block)
-                        print(f"   Sent empty data block")
-                        
-                        # Send end of stream
-                        self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
-                        print(f"   Query response completed successfully")
-                    except Exception as e:
-                        print(f"❌ Error sending empty data: {e}")
-                        self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                        self.write_binary_str(f"Failed to send empty data: {str(e)}", client_socket)
+                # Check if query contains FORMAT clause
+                if "FORMAT" in query.upper():
+                    # Extract format from query like "SELECT 1 FORMAT JSON"
+                    parts = query.upper().split("FORMAT")
+                    if len(parts) > 1:
+                        format_name = parts[1].strip()
+                        # Remove format from query for chdb
+                        query_for_chdb = parts[0].strip()
+                    else:
+                        query_for_chdb = query
                 else:
-                    print(f"❌ Unexpected result type: {type(result)}")
-                    # This shouldn't happen, but handle it gracefully
-                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                    self.write_binary_str("Unexpected result type", client_socket)
-                    return
+                    # Add NATIVE format for SELECT queries
+                    if query.strip().upper().startswith('SELECT'):
+                        query_for_chdb = f"{query} FORMAT {format_name}"
+                
+                print(f"   📊 Using format: {format_name}")
+                print(f"   📝 Query for chdb: {query_for_chdb}")
+                
+                result = execute_query_with_session(query_for_chdb, self.current_user, self.current_password)
+                print(f"   ✅ Query executed successfully")
+                
+                # Print client revision and compression
+                print(f"   [DEBUG] Client revision: {self.client_revision if hasattr(self, 'client_revision') else 'unknown'}")
+                print(f"   [DEBUG] Compression requested: {getattr(self, 'compression', 'unknown')}")
+                
+                # Send DATA packet with results
+                self.write_varint(ServerPacketTypes.DATA, client_socket)
+                # Send empty table name as binary string (required by protocol)
+                self.write_binary_str("", client_socket)
+                
+                # Send actual data for SELECT queries, empty for others
+                if result and len(result) > 0 and query.strip().upper().startswith('SELECT'):
+                    # Debug: Print the exact chdb result
+                    print(f"   [DEBUG] chdb NATIVE result: {result.hex()}")
+                    print(f"   [DEBUG] chdb NATIVE result length: {len(result)}")
+                    
+                    # Parse chdb NATIVE result for multiple columns and rows
+                    # Format: n_columns, n_rows, [column_name, column_type, column_data] for each column
+                    pos = 0
+                    n_columns = result[pos]; pos += 1
+                    n_rows = result[pos]; pos += 1
+                    
+                    columns = []
+                    for col_idx in range(n_columns):
+                        # Read column name
+                        col_name_len = result[pos]; pos += 1
+                        col_name = result[pos:pos+col_name_len].decode('ascii'); pos += col_name_len
+                        
+                        # Read column type
+                        col_type_len = result[pos]; pos += 1
+                        col_type = result[pos:pos+col_type_len].decode('ascii'); pos += col_type_len
+                        
+                        # Read column data for all rows
+                        if col_type == 'String':
+                            # String data: for each row, length-prefixed string
+                            col_data = result[pos:]; pos = len(result)  # Read all remaining data
+                        else:
+                            # Numeric data: for each row, fixed-size value
+                            if col_type == 'UInt8':
+                                data_size = 1
+                            elif col_type == 'UInt64':
+                                data_size = 8
+                            else:
+                                data_size = 1  # Default
+                            
+                            col_data = result[pos:pos + (n_rows * data_size)]; pos += n_rows * data_size
+                        
+                        columns.append((col_name, col_type, col_data))
+                    
+                    print(f"   [DEBUG] Parsed: {n_columns} columns, {n_rows} rows")
+                    for i, (name, type_name, data) in enumerate(columns):
+                        print(f"   [DEBUG] Column {i}: '{name}' type '{type_name}' data {data.hex()}")
+                    
+                    # Send BlockInfo first (if revision supports it) - required for revision >= 51903
+                    # BlockInfo structure: field_num=1, is_overflows=0, field_num=2, bucket_num=-1, field_num=0
+                    self.write_varint(1, client_socket)  # field_num=1
+                    client_socket.send(b"\x00")  # is_overflows=0 (uint8)
+                    self.write_varint(2, client_socket)  # field_num=2
+                    client_socket.send(struct.pack('<i', -1))  # bucket_num=-1 (int32)
+                    self.write_varint(0, client_socket)  # field_num=0 (end marker)
+                    
+                    # Send block data in the format expected by clickhouse-driver
+                    self.write_varint(n_columns, client_socket)  # n_columns
+                    self.write_varint(n_rows, client_socket)  # n_rows
+                    
+                    # Send each column's metadata and data
+                    for col_name, col_type, col_data in columns:
+                        # Send column name
+                        self.write_binary_str(col_name, client_socket)
+                        
+                        # Send column type
+                        self.write_binary_str(col_type, client_socket)
+                        
+                        # Send custom serialization flag (0) - required for revision >= 54454
+                        client_socket.send(b"\x00")
+                        
+                        # Send the actual data in the format expected by clickhouse-driver
+                        if col_type == 'String':
+                            # For String columns with multiple rows, send each string with its length
+                            if n_rows > 1:
+                                # Parse the string data: each string is length-prefixed
+                                string_pos = 0
+                                for row_idx in range(n_rows):
+                                    if string_pos < len(col_data):
+                                        str_len = col_data[string_pos]; string_pos += 1
+                                        if string_pos + str_len <= len(col_data):
+                                            string_val = col_data[string_pos:string_pos + str_len]
+                                            # Send string length as varint, then string data
+                                            self.write_varint(str_len, client_socket)
+                                            client_socket.send(string_val)
+                                            string_pos += str_len
+                                else:
+                                    # Single row: send the string length as varint, then the string data
+                                    string_data = col_data[1:]  # Skip the length byte
+                                    self.write_varint(len(string_data), client_socket)
+                                    client_socket.send(string_data)
+                            else:
+                                # Single row: send the string length as varint, then the string data
+                                string_data = col_data[1:]  # Skip the length byte
+                                self.write_varint(len(string_data), client_socket)
+                                client_socket.send(string_data)
+                        else:
+                            # For numeric types, send the data as-is
+                            client_socket.send(col_data)
+                    
+                    print(f"   [DEBUG] Sent properly formatted block data")
+                else:
+                    # For non-SELECT queries, send empty block
+                    self.write_binary_str("", client_socket)  # Table name
+                    client_socket.send(b"\x00")  # BlockInfo
+                    self.write_varint(0, client_socket)  # 0 columns
+                    self.write_varint(0, client_socket)  # 0 rows
+                    print(f"   [DEBUG] Sending empty block for non-SELECT query")
+                
+                # Send END_OF_STREAM packet
+                print(f"   📤 Sending END_OF_STREAM packet (type 5)")
+                self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
                 
             except Exception as e:
-                # Log the error
-                print(f"❌ Native query execution failed: {e}")
-                print(f"   Query: {query}")
+                print(f"   ❌ Query execution failed: {e}")
                 import traceback
                 traceback.print_exc()
-                # Send exception
-                self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
-                # Send error as string, not binary
-                error_str = str(e)
-                self.write_binary_str(error_str, client_socket)
-            
-        except Exception as e:
-            print(f"❌ Error handling native query: {e}")
-            import traceback
-            traceback.print_exc()
-            # Send exception
-            try:
+                
+                # Send EXCEPTION packet
                 self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
                 self.write_binary_str(str(e), client_socket)
-            except Exception as send_error:
-                print(f"❌ Failed to send error response: {send_error}")
+                
+        except Exception as e:
+            print(f"❌ Error handling query: {e}")
+            import traceback
+            traceback.print_exc()
     
     def handle_ping(self, client_socket: socket.socket):
         """Handle ping from client"""
@@ -651,23 +715,30 @@ class NativeProtocolServer:
         """Read a variable-length integer"""
         result = 0
         shift = 0
+        raw_bytes = []
         while True:
             data = sock.recv(1)
             if not data:
                 raise ConnectionError("Connection closed by peer")
             byte = data[0]
+            raw_bytes.append(byte)
             result |= (byte & 0x7F) << shift
             if (byte & 0x80) == 0:
                 break
             shift += 7
+        print(f"   [DEBUG] read_varint: bytes={raw_bytes} value={result}")
         return result
     
     def write_varint(self, value: int, sock: socket.socket):
-        """Write a variable-length integer"""
+        """Write a variable-length integer in the exact format expected by clickhouse-driver (little-endian)"""
+        if value < 0:
+            # Handle negative numbers - convert to unsigned
+            value = (1 << 64) + value
+        
         while value >= 0x80:
             sock.send(bytes([(value & 0x7F) | 0x80]))
             value >>= 7
-        sock.send(bytes([value]))
+        sock.send(bytes([value & 0x7F]))
     
     def write_uint64(self, value: int, sock: socket.socket):
         """Write a 64-bit unsigned integer"""
@@ -684,11 +755,14 @@ class NativeProtocolServer:
         return data.decode('utf-8')
     
     def write_binary_str(self, value: str, sock: socket.socket):
-        """Write a binary string"""
+        """Write a binary string in the format expected by clickhouse-driver"""
         if isinstance(value, str):
             value = value.encode('utf-8')
+        # Write the length as a varint
         self.write_varint(len(value), sock)
-        sock.send(value)
+        # Write the string data
+        if len(value) > 0:
+            sock.send(value)
 
 @auth.verify_password
 def verify(username, password):
