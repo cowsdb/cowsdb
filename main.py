@@ -513,6 +513,7 @@ class NativeProtocolServer:
                         print(f"   Sending DATA packet...")
                         
                         # Send data packet with proper ClickHouse native protocol structure
+                        print(f"   Sending packet type: {ServerPacketTypes.DATA}")
                         self.write_varint(ServerPacketTypes.DATA, client_socket)
                         self.write_binary_str("", client_socket)  # table name
                         self.write_varint(0, client_socket)  # block info
@@ -576,6 +577,7 @@ class NativeProtocolServer:
                     print(f"   Query returned empty result, sending empty data block")
                     try:
                         # Send empty data packet
+                        print(f"   Sending packet type: {ServerPacketTypes.DATA} (empty)")
                         self.write_varint(ServerPacketTypes.DATA, client_socket)
                         self.write_binary_str("", client_socket)  # table name
                         self.write_varint(0, client_socket)  # block info
