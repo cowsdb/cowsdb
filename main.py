@@ -266,8 +266,12 @@ class NativeProtocolServer:
             while self.running:
                 try:
                     print(f"   Waiting for packet from {address}...")
-                    packet_type = self.read_varint(client_socket)
-                    print(f"   Received packet type: {packet_type} from {address}")
+                    try:
+                        packet_type = self.read_varint(client_socket)
+                        print(f"   Received packet type: {packet_type} from {address}")
+                    except Exception as read_error:
+                        print(f"❌ Failed to read packet type from {address}: {read_error}")
+                        break
                     
                     if packet_type == ClientPacketTypes.QUERY:
                         self.handle_query(client_socket, address)
@@ -459,6 +463,7 @@ class NativeProtocolServer:
             
             # Read the actual query
             query = self.read_binary_str(client_socket)
+            print(f"   📝 Raw query content: '{query}'")
             
             # Read parameters if supported
             if client_revision >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
@@ -475,14 +480,29 @@ class NativeProtocolServer:
                 print(f"🔍 Executing native query: {query}")
                 print(f"   User: {self.current_user}, Password: {self.current_password}")
                 
+                # Special handling for command line suggestions
+                if "suggestions" in query.lower() or "system.suggestions" in query.lower():
+                    print(f"   🎯 Detected command line suggestions query!")
+                    print(f"   This is likely the query causing the connection reset")
+                
                 # Get or create persistent session for this client's auth
                 session = get_or_create_session(self.current_user, self.current_password)
                 print(f"   Got session for query execution")
                 
                 # Execute query using the persistent session
                 print(f"   Executing query with chdb...")
-                result = session.query(query, "Native").bytes()
-                print(f"   Query executed, got {len(result)} bytes")
+                try:
+                    result = session.query(query, "Native").bytes()
+                    print(f"   Query executed successfully, got {len(result)} bytes")
+                except Exception as chdb_error:
+                    print(f"❌ chdb query execution failed: {chdb_error}")
+                    print(f"   Query: {query}")
+                    import traceback
+                    traceback.print_exc()
+                    # Send exception to client
+                    self.write_varint(ServerPacketTypes.EXCEPTION, client_socket)
+                    self.write_binary_str(f"Query execution failed: {str(chdb_error)}", client_socket)
+                    return
                 
                 # Since execute_query_with_session returns bytes directly, 
                 # we assume success if we get bytes (no error checking needed)
