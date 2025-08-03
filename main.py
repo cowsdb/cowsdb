@@ -231,7 +231,8 @@ class NativeProtocolServer:
         try:
             while self.running:
                 client_socket, address = self.server_socket.accept()
-                print(f"Native connection from {address}")
+                print(f"🔌 NATIVE CONNECTION ACCEPTED from {address}")
+                print(f"   Starting client handler thread...")
                 
                 client_thread = threading.Thread(
                     target=self.handle_client,
@@ -254,6 +255,7 @@ class NativeProtocolServer:
     
     def handle_client(self, client_socket: socket.socket, address: tuple):
         """Handle a single client connection"""
+        print(f"🔍 CLIENT HANDLER STARTED for {address}")
         try:
             print(f"🔍 New native client connection from {address}")
             
@@ -262,6 +264,7 @@ class NativeProtocolServer:
                 return
             
             print(f"✅ Native client {address} authenticated as {self.current_user}:{self.current_password}")
+            print(f"   Client revision: {self.client_revision}")
             
             while self.running:
                 try:
@@ -318,6 +321,7 @@ class NativeProtocolServer:
     
     def perform_handshake(self, client_socket: socket.socket) -> bool:
         """Perform protocol handshake with client"""
+        print(f"🤝 HANDSHAKE STARTED")
         try:
             print(f"🔍 Starting native handshake...")
             
@@ -395,6 +399,7 @@ class NativeProtocolServer:
     
     def handle_query(self, client_socket: socket.socket, address: tuple):
         """Handle a query from the client"""
+        print(f"📝 QUERY HANDLER STARTED for {address}")
         try:
             print(f"🔍 Starting query handling...")
             
