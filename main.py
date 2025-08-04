@@ -306,17 +306,15 @@ class NativeProtocolServer:
         }
         
         try:
-            print(f"DEBUG: Starting client handler for {address}")
+            print(f"DEBUG: New connection from {address}")
             # Initial handshake
             if not self.perform_handshake(client_socket, connection_state):
                 print(f"DEBUG: Handshake failed for {address}")
                 return
-            print(f"DEBUG: Handshake successful for {address}")
             
-            # After handshake, expect QUERY, PING, etc.
-            while self.running:
+            # Main client loop
+            while True:
                 try:
-                    print(f"DEBUG: Waiting for packet from {address}")
                     if not self.handle_protocol_packet(client_socket, address, connection_state):
                         print(f"DEBUG: Protocol packet handling failed for {address}")
                         break
@@ -408,10 +406,8 @@ class NativeProtocolServer:
         try:
             # Read packet type
             packet_type = self.read_varint(client_socket)
-            print(f"DEBUG: Received packet type: {packet_type}")
             
             if packet_type == ClientPacketTypes.HELLO:
-                print(f"DEBUG: Handling HELLO packet")
                 # Only send HELLO response during initial handshake
                 # After handshake, HELLO packets should be ignored or handled differently
                 if not connection_state['handshake_complete']:
@@ -424,25 +420,18 @@ class NativeProtocolServer:
                     connection_state['handshake_complete'] = True
                 return True
             elif packet_type == ClientPacketTypes.QUERY:
-                print(f"DEBUG: Handling QUERY packet")
                 return self.handle_query(client_socket, address, connection_state)
             elif packet_type == ClientPacketTypes.DATA:
-                print(f"DEBUG: Handling DATA packet")
                 return self.handle_data(client_socket, address, connection_state)
             elif packet_type == ClientPacketTypes.PING:
-                print(f"DEBUG: Handling PING packet")
                 return self.handle_ping(client_socket)
             elif packet_type == ClientPacketTypes.CANCEL:
-                print(f"DEBUG: Handling CANCEL packet")
                 return self.handle_cancel(client_socket)
             else:
                 print(f"DEBUG: Unknown packet type: {packet_type}")
                 return False
-                
         except Exception as e:
-            print(f"DEBUG: Error in handle_protocol_packet: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"DEBUG: Error handling protocol packet: {e}")
             return False
     
     def handle_query(self, client_socket: socket.socket, address: tuple, connection_state: dict):
@@ -507,10 +496,8 @@ class NativeProtocolServer:
             
             # Read compression flag
             compression = self.read_varint(client_socket)
-            print(f"DEBUG: Compression flag: {compression}")
             
             # Read query text based on compression flag
-            print(f"DEBUG: About to read query text")
             if compression == 0:
                 # No compression
                 query = self.read_binary_str(client_socket)
@@ -520,13 +507,11 @@ class NativeProtocolServer:
             else:
                 # Unknown compression type (compression == 2)
                 # The client seems to send an empty compressed string first, then the actual query
-                print(f"DEBUG: Unknown compression type {compression}, reading empty compressed string first")
                 empty_compressed = self.read_compressed_binary_str(client_socket)
-                print(f"DEBUG: Empty compressed string: '{empty_compressed}'")
                 # Now read the actual query as a regular binary string
                 query = self.read_binary_str(client_socket)
-            print(f"DEBUG: Read query from client: '{query}'")
-            print(f"DEBUG: Query length: {len(query) if query else 0}")
+            
+            print(f"DEBUG: Executing query: {query}")
             
             # Read parameters if revision supports it
             if connection_state['client_revision'] >= DBMS_MIN_PROTOCOL_VERSION_WITH_PARAMETERS:
@@ -540,6 +525,7 @@ class NativeProtocolServer:
             
             # Execute the query
             try:
+                print(f"DEBUG: About to execute query: '{query}'")
                 # Extract FORMAT from query if present, otherwise use NATIVE
                 format_name = "NATIVE"  # Default format for native protocol
                 query_for_chdb = query
@@ -559,23 +545,35 @@ class NativeProtocolServer:
                     if query.strip().upper().startswith('SELECT'):
                         query_for_chdb = f"{query} FORMAT {format_name}"
                 
+                print(f"DEBUG: Final query for chdb: '{query_for_chdb}'")
                 result = execute_query_with_session(query_for_chdb, format_name, connection_state['current_user'], connection_state['current_password'])
                 
-                # Temporary debug output
-                print(f"DEBUG: Query '{query}' -> result: {result}")
+                print(f"DEBUG: Query result: {len(result) if result else 0} bytes")
+                if result:
+                    print(f"DEBUG: Raw result bytes: {result[:50]}...")  # Show first 50 bytes
+                    print(f"DEBUG: Full result bytes: {list(result)}")  # Show all bytes as list
                 
-                # Send DATA packet with results
-                self.write_varint(ServerPacketTypes.DATA, client_socket)
-                # Send empty table name as binary string (required by protocol)
-                self.write_binary_str("", client_socket)
-                
-                # Send actual data for SELECT queries, empty for others
                 if result and len(result) > 0 and query.strip().upper().startswith('SELECT'):
-                    # Parse chdb NATIVE result for multiple columns and rows
-                    # Format: n_columns, n_rows, [column_name, column_type, column_data] for each column
+                    # Send DATA packet with results
+                    self.write_varint(ServerPacketTypes.DATA, client_socket)
+                    # Send empty table name as binary string (required by protocol)
+                    self.write_binary_str("", client_socket)
+                    
+                    # Send BlockInfo structure (required by protocol)
+                    # BlockInfo: field_num=1 (is_overflows), field_num=2 (bucket_num), field_num=0 (end marker)
+                    self.write_varint(1, client_socket)  # field_num=1
+                    self.write_uint8(0, client_socket)   # is_overflows=False
+                    self.write_varint(2, client_socket)  # field_num=2
+                    self.write_int32(-1, client_socket)  # bucket_num=-1
+                    self.write_varint(0, client_socket)  # field_num=0 (end marker)
+                    
+                    # Parse chdb NATIVE result format
+                    # Format: [n_columns, n_rows, column1_name_len, column1_name, column1_type_len, column1_type, column1_data, ...]
                     pos = 0
                     n_columns = result[pos]; pos += 1
                     n_rows = result[pos]; pos += 1
+                    
+                    print(f"DEBUG: Parsing {n_columns} columns, {n_rows} rows")
                     
                     columns = []
                     for col_idx in range(n_columns):
@@ -587,15 +585,27 @@ class NativeProtocolServer:
                         col_type_len = result[pos]; pos += 1
                         col_type = result[pos:pos+col_type_len].decode('ascii'); pos += col_type_len
                         
-                        # Read column data for all rows
+                        print(f"DEBUG: Column {col_idx}: {col_name} ({col_type})")
+                        
+                        # Read column data
                         if col_type == 'String':
-                            # String data: for each row, length-prefixed string
-                            col_data = result[pos:]; pos = len(result)  # Read all remaining data
+                            # For String columns, read the string data
+                            if n_rows > 1:
+                                # Multiple rows: each string is length-prefixed
+                                col_data = result[pos:]; pos = len(result)  # Read all remaining data
+                            else:
+                                # Single row: read the string data
+                                str_len = result[pos]; pos += 1
+                                col_data = result[pos:pos+str_len]; pos += str_len
                         else:
-                            # Numeric data: for each row, fixed-size value
+                            # For numeric types, read fixed-size data
                             if col_type == 'UInt8':
                                 data_size = 1
+                            elif col_type == 'UInt32':
+                                data_size = 4
                             elif col_type == 'UInt64':
+                                data_size = 8
+                            elif col_type == 'Float64':
                                 data_size = 8
                             else:
                                 data_size = 1  # Default
@@ -603,6 +613,7 @@ class NativeProtocolServer:
                             col_data = result[pos:pos + (n_rows * data_size)]; pos += n_rows * data_size
                         
                         columns.append((col_name, col_type, col_data))
+                        print(f"DEBUG: Column {col_idx} data: {list(col_data)}")
                     
                     # Send block data in the format expected by clickhouse-driver
                     self.write_varint(n_columns, client_socket)  # n_columns
@@ -617,13 +628,13 @@ class NativeProtocolServer:
                         self.write_binary_str(col_type, client_socket)
                         
                         # Send custom serialization flag (0) - required for revision >= 54454
-                        client_socket.send(b"\x00")
+                        self.write_uint8(0, client_socket)
                         
                         # Send the actual data in the format expected by clickhouse-driver
                         if col_type == 'String':
-                            # For String columns with multiple rows, send each string with its length
+                            # For String columns, send each string with its length as varint
                             if n_rows > 1:
-                                # Parse the string data: each string is length-prefixed
+                                # Parse multiple strings from the data
                                 string_pos = 0
                                 for row_idx in range(n_rows):
                                     if string_pos < len(col_data):
@@ -636,17 +647,16 @@ class NativeProtocolServer:
                                             string_pos += str_len
                             else:
                                 # Single row: send the string length as varint, then the string data
-                                string_data = col_data[1:]  # Skip the length byte
-                                self.write_varint(len(string_data), client_socket)
-                                client_socket.send(string_data)
+                                self.write_varint(len(col_data), client_socket)
+                                client_socket.send(col_data)
                         else:
                             # For numeric types, send the data as-is
                             client_socket.send(col_data)
                 else:
-                    # For non-SELECT queries (DDL, DML), send empty block
-                    # Send empty block data
-                    self.write_varint(0, client_socket)  # 0 columns
-                    self.write_varint(0, client_socket)  # 0 rows
+                    # For non-SELECT queries (DDL, DML), don't send any data block
+                    # Just send END_OF_STREAM directly
+                    print(f"DEBUG: Non-SELECT query, sending END_OF_STREAM directly")
+                    pass
                 
                 # Send END_OF_STREAM packet
                 self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
@@ -671,23 +681,9 @@ class NativeProtocolServer:
             table_name = self.read_binary_str(client_socket)
             print(f"DEBUG: DATA packet for table: {table_name}")
             
-            # Read block info (simplified - just skip it for now)
-            # For now, just read and discard the data
-            try:
-                # Read number of columns
-                n_columns = self.read_varint(client_socket)
-                print(f"DEBUG: DATA packet columns: {n_columns}")
-                
-                # Read number of rows
-                n_rows = self.read_varint(client_socket)
-                print(f"DEBUG: DATA packet rows: {n_rows}")
-                
-                # For now, just skip the actual data
-                # In a real implementation, we would parse and process this data
-                print(f"DEBUG: Skipping {n_rows} rows of data")
-                
-            except Exception as e:
-                print(f"DEBUG: Error reading DATA packet structure: {e}")
+            # For now, just acknowledge the DATA packet
+            # This is a simplified approach to get basic functionality working
+            print(f"DEBUG: Acknowledging DATA packet for table: {table_name}")
             
             # Send END_OF_STREAM to acknowledge
             self.write_varint(ServerPacketTypes.END_OF_STREAM, client_socket)
@@ -745,18 +741,30 @@ class NativeProtocolServer:
     
     def write_varint(self, value: int, sock: socket.socket):
         """Write a variable-length integer in the exact format expected by clickhouse-driver (little-endian)"""
+        original_value = value
         if value < 0:
             # Handle negative numbers - convert to unsigned
             value = (1 << 64) + value
         
+        bytes_to_send = []
         while value >= 0x80:
-            sock.send(bytes([(value & 0x7F) | 0x80]))
+            bytes_to_send.append((value & 0x7F) | 0x80)
             value >>= 7
-        sock.send(bytes([value & 0x7F]))
+        bytes_to_send.append(value & 0x7F)
+        
+        sock.send(bytes(bytes_to_send))
     
     def write_uint64(self, value: int, sock: socket.socket):
-        """Write a 64-bit unsigned integer"""
+        """Write a 64-bit unsigned integer in little-endian format"""
         sock.send(struct.pack('<Q', value))
+    
+    def write_uint8(self, value: int, sock: socket.socket):
+        """Write an 8-bit unsigned integer in little-endian format"""
+        sock.send(struct.pack('<B', value))
+    
+    def write_int32(self, value: int, sock: socket.socket):
+        """Write a 32-bit signed integer in little-endian format"""
+        sock.send(struct.pack('<i', value))
     
     def read_binary_str(self, sock: socket.socket) -> str:
         """Read a binary string"""
