@@ -13,7 +13,7 @@ ENV VITE_CLICKHOUSE_SELFSERVICE="true"
 ADD requirements.txt .
 RUN apt update && apt install -y binutils wget \
   && pip install -r requirements.txt \
-  && strip /usr/local/lib/python3.11/site-packages/chdb/_chdb.cpython-*-*-linux-gnu.so \
+#  && strip /usr/local/lib/python3.11/site-packages/chdb/_chdb.cpython-*-*-linux-gnu.so \
   && rm -rf /var/lib/apt/lists/* && rm -rf ~/.cache/pip/*
 ADD main.py .
 ADD public ./public
